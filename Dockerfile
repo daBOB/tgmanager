@@ -1,40 +1,30 @@
-# Use a base image with Node.js, for example
-FROM oven/bun:1 AS base
+# Use an official Node.js runtime as a parent image
+FROM node:18-slim
 
-# Set the working directory inside the container
-WORKDIR /app
+# Set the working directory in the container
+WORKDIR /usr/src/app
+RUN mkdir -p /usr/src/app/sessions
+RUN mkdir -p /usr/src/app/uploads
 
-# install dependencies into temp directory
-# this will cache them and speed up future builds
-FROM base AS install
-RUN mkdir -p /temp/dev
-COPY package.json bun.lockb /temp/dev/
-RUN cd /temp/dev && bun install --frozen-lockfile
+# Install FFmpeg
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# install with --production (exclude devDependencies)
-RUN mkdir -p /temp/prod
-COPY package.json bun.lockb /temp/prod/
-RUN cd /temp/prod && bun install --frozen-lockfile --production
+# Copy the package.json and package-lock.json (if available)
+COPY package*.json ./
 
-# copy node_modules from temp directory
-# then copy all (non-ignored) project files into the image
-FROM base AS prerelease
-COPY --from=install /temp/dev/node_modules node_modules
-COPY . /app
+# Install any needed packages specified in package.json
+RUN npm install
 
-# copy production dependencies and source code into final image
-FROM base AS release
-COPY --from=install /temp/prod/node_modules node_modules
-COPY --from=prerelease /app/index.js .
-COPY --from=prerelease /app/package.json .
+# Bundle your app's source code inside the Docker container
+COPY . .
 
+# Define environment variable
+ENV NODE_ENV production
 
-# Create a directory for sessions
-RUN mkdir /sessions
+# Set the executable for the container
+ENTRYPOINT ["node", "index.js"]
 
-# Mount the sessions directory as a volume
-VOLUME /sessions
-
-USER bun
-EXPOSE 3000/tcp
-ENTRYPOINT [ "bun", "run", "index.js" ]
+# Set default CMD arguments (can be overridden from the Docker command line)
+CMD ["--help"]

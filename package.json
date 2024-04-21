@@ -1,6 +1,6 @@
 {
-  "name": "Uploader",
-  "bin": "index.js",
+  "name": "uploader",
+  "main": "index.js",
   "dependencies": {
     "cli-progress": "^3.12.0",
     "commander": "^12.0.0",

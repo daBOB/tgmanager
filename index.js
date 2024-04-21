@@ -1,10 +1,10 @@
-import { Api, TelegramClient } from "telegram";
-import { StoreSession } from "telegram/sessions";
+const { Api, TelegramClient } = require("telegram");
+const { StoreSession } = require("telegram/sessions");
 const input = require("input"); 
 const fs = require("fs");
 const { program } = require("commander");
 const Uploader = require("./Uploader.js");
-import path  from 'path';
+const path = require('path');
 
 
 
@@ -24,7 +24,7 @@ const masterclass = {
 const accounts = { nitewalker, masterclass };
 
 const startClient = async (account_name) => {
-  const configDir = path.join('/', 'sessions',account_name);
+  const configDir = path.join( 'sessions', account_name);
    // Ensure the config directory exists
    if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
@@ -44,7 +44,8 @@ const startClient = async (account_name) => {
     onError: (err) => console.log(err),
   });
   console.log("You should now be connected.");
-  console.log(client.session.save()); // Save this string to avoid logging in again
+  client.session.save()
+  //console.log(client.session.save()); // Save this string to avoid logging in again
   return client;
   //await client.sendMessage("me", { message: "Hello!" });
 };
@@ -90,21 +91,22 @@ const options = program.opts();
 
 const main = async () => {
   const { account, command, chatId, filePath, deleteSource } = options;
+  const uploadPath = `uploads/${filePath}`;
 
-  console.log(
-    "Command:",
-    command,
-    "Account",
-    account,
-    "ChatId",
-    chatId,
-    "Filepath",
-    filePath
-  );
+  // console.log(
+  //   "Command:",
+  //   command,
+  //   "Account",
+  //   account,
+  //   "ChatId",
+  //   chatId,
+  //   "Filepath",
+  //   filePath
+  // );
 
   // Check if the file exists
-  if (!fs.existsSync(filePath)) {
-    console.error(`Error: File does not exist at path ${filePath}`);
+  if (!fs.existsSync(uploadPath)) {
+    console.error(`Error: File does not exist at path ${uploadPath}`);
     process.exit(1);
   }
 
@@ -116,9 +118,7 @@ const main = async () => {
   const client = await startClient(account);
 
   const isPremiumAccount = await isPremium(client);
-  console.log("isPremium:", isPremiumAccount);
-
-  const fileSizeInGiB = getFileSizeInGiB(filePath);
+  const fileSizeInGiB = getFileSizeInGiB(uploadPath);
   const fileSizeLimit = isPremiumAccount ? 4 : 2; // 4 GiB for premium, 2 GiB for non-premium
 
   if (fileSizeInGiB > fileSizeLimit) {
@@ -130,12 +130,12 @@ const main = async () => {
     process.exit(1);
   }
 
-  if (command === "upload" && chatId && filePath) {
+  if (command === "upload" && chatId && uploadPath) {
     const uploader = new Uploader(client);
-    const success = await uploader.uploadFile(chatId, filePath);
+    const success = await uploader.uploadFile(chatId, uploadPath);
     if (success && deleteSource) {
-      fs.unlinkSync(filePath);
-      console.log(`Deleted source file: ${filePath}`);
+      fs.unlinkSync(uploadPath);
+      console.log(`Deleted source file: ${uploadPath}`);
     }
 
     if (!success) {
