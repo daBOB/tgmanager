@@ -1,0 +1,11 @@
+{
+  "name": "Uploader",
+  "bin": "index.js",
+  "dependencies": {
+    "cli-progress": "^3.12.0",
+    "commander": "^12.0.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "input": "^1.0.1",
+    "telegram": "^2.20.15"
+  }
+}
