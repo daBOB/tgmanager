@@ -3,6 +3,8 @@ const { basename, extname } = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 const { Api } = require("telegram");
 const cliProgress = require("cli-progress");
+const sharp = require('sharp');
+
 class Uploader {
   constructor(client) {
     this.client = client;
@@ -29,7 +31,7 @@ class Uploader {
   async uploadMP4File(chatId, filePath) {
     const { width, height, duration } = await this.getVideoInfo(filePath);
     // console.log(width, height, duration);
-	const fileName = basename(filePath);
+    const fileName = basename(filePath);
     const progressBar = new cliProgress.SingleBar(
       {
         etaAsynchronousUpdate: true,
@@ -60,17 +62,17 @@ class Uploader {
           progressBar.update(percentage); // Update the progress bar percentage
         },
       });
-	  progressBar.stop();
-	  return true;
+      progressBar.stop();
+      return true;
     } catch (error) {
       progressBar.stop();
       console.error("Failed to upload video:", error);
-	  return false;
+      return false;
     }
   }
 
   async uploadDocument(chatId, filePath) {
-	const fileName = basename(filePath);
+    const fileName = basename(filePath);
     const progressBar = new cliProgress.SingleBar(
       {
         etaAsynchronousUpdate: true,
@@ -91,12 +93,12 @@ class Uploader {
           progressBar.update(percentage); // Update the progress bar percentage
         },
       });
-	  progressBar.stop();
-	  return true;
+      progressBar.stop();
+      return true;
     } catch (error) {
       progressBar.stop();
       console.error("Failed to upload video:", error);
-	  return false;
+      return false;
     }
   }
 
@@ -107,9 +109,34 @@ class Uploader {
 
     if (extension === ".mp4") {
       return this.uploadMP4File(chatId, filePath);
+    } else if ([".jpg", ".jpeg", ".png", ".gif"].includes(extension)) {
+      // Check image dimensions
+      const metadata = await sharp(filePath).metadata();
+      const { width, height } = metadata;
+
+      if (width + height > 10000) {
+        // Reduce image size
+        const resizedFilePath = `${filePath}_resized${extension}`;
+        await sharp(filePath)
+          .resize({
+            width: Math.round(width * 0.8),
+            height: Math.round(height * 0.8),
+          })
+          .toFile(resizedFilePath);
+
+        // Upload the resized image
+        const success = await this.uploadDocument(chatId, resizedFilePath);
+
+        // Delete the resized image file
+        fs.unlinkSync(resizedFilePath);
+
+        return success;
+      } else {
+        return this.uploadDocument(chatId, filePath);
+      }
     } else {
-	  return this.uploadDocument(chatId, filePath);
-	}
+      return this.uploadDocument(chatId, filePath);
+    }
   }
 }
 
