@@ -98,7 +98,14 @@ const options = program.opts();
 
 const main = async () => {
   const { account, command, chatId, filePath, deleteSource, name } = options;
-  const uploadPath = `uploads/${filePath}`;
+
+  let uploadPath = `uploads/${filePath}`
+  // if(isDocker()){
+  //   uploadPath = `uploads/${filePath}`
+  // }
+
+//  const uploadPath = `uploads/${filePath}`;
+  // const uploadPath = `${filePath}`;
 
   // console.log(
   //   "Command:",
