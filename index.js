@@ -41,6 +41,7 @@ const startClient = async (account_name) => {
 
   const client = new TelegramClient(storeSession, apiId, apiHash, {
     connectionRetries: 5,
+    useWSS: true
   });
   await client.start({
     phoneNumber: async () => phoneNumber,
