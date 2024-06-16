@@ -40,9 +40,23 @@ const startClient = async (account_name) => {
   const { apiId, apiHash, phoneNumber, password } = accounts[account_name];
 
   const client = new TelegramClient(storeSession, apiId, apiHash, {
-    connectionRetries: 5,
+    connectionRetries: 50,
     useWSS: true
   });
+
+client.on("disconnect", (err) => {
+  if (err) {
+    console.error("Client disconnected with error:", err);
+  } else {
+    console.log("Client disconnected");
+  }
+  process.exit(1);
+});
+
+client.on("error", (err) => {
+  console.error("Client error:", err);
+});
+
   await client.start({
     phoneNumber: async () => phoneNumber,
     password: async () => password,
@@ -56,6 +70,8 @@ const startClient = async (account_name) => {
   return client;
   //await client.sendMessage("me", { message: "Hello!" });
 };
+
+
 
 const getFileSizeInGiB = (filePath) => {
   const stats = fs.statSync(filePath);
