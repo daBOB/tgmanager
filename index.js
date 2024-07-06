@@ -27,7 +27,14 @@ const junkies = {
   password: "eexooRie9U",
 };
 
-const accounts = { nitewalker, masterclass, junkies };
+const nicenstein = {
+  apiId: 19816201,
+  apiHash: "3b90c55743e161c9550bb3047ff2837a",
+  phoneNumber: "+37064005464",
+  password: "eexooRie9U",
+};
+
+const accounts = { nitewalker, masterclass, junkies, nicenstein };
 
 const startClient = async (account_name) => {
   const configDir = path.join("sessions", account_name);
