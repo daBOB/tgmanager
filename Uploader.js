@@ -1,4 +1,4 @@
-const { unlink } = require("node:fs");
+const { unlink } = require("node:fs/promises"); // Change to promises version
 const { basename, extname } = require("node:path");
 const ffmpeg = require("fluent-ffmpeg");
 const { Api } = require("telegram");
@@ -103,38 +103,57 @@ class Uploader {
   }
 
   async uploadFile(chatId, filePath) {
-    // Read file contents
-    //const file = fs.createReadStream(filePath);
     const extension = extname(filePath).toLowerCase();
 
     if (extension === ".mp4") {
       return this.uploadMP4File(chatId, filePath);
     }
     if ([".jpg", ".jpeg", ".png", ".gif"].includes(extension)) {
-      // Check image dimensions
-      const metadata = await sharp(filePath).metadata();
-      const { width, height } = metadata;
+      try {
+        // Check image dimensions
+        const metadata = await sharp(filePath).metadata();
+        const { width, height } = metadata;
 
-      if (width + height > 10000) {
-        // Reduce image size
-        const resizedFilePath = `${filePath}_resized${extension}`;
-        await sharp(filePath)
-          .resize({
-            width: Math.round(width * 0.8),
-            height: Math.round(height * 0.8),
-          })
-          .toFile(resizedFilePath);
+        // Telegram has limits on image dimensions
+        const MAX_DIMENSION = 10000;
+        const RESIZE_RATIO = 0.5; // More aggressive resize
 
-        // Upload the resized image
-        const success = await this.uploadDocument(chatId, resizedFilePath);
+        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+          // Calculate new dimensions while maintaining aspect ratio
+          const aspectRatio = width / height;
+          let newWidth = width;
+          let newHeight = height;
 
-        // Delete the resized image file
-        unlink(resizedFilePath);
+          if (width > height && width > MAX_DIMENSION) {
+            newWidth = MAX_DIMENSION;
+            newHeight = Math.round(MAX_DIMENSION / aspectRatio);
+          } else if (height > MAX_DIMENSION) {
+            newHeight = MAX_DIMENSION;
+            newWidth = Math.round(MAX_DIMENSION * aspectRatio);
+          }
 
-        return success;
+          // Reduce image size
+          const resizedFilePath = `${filePath}_resized${extension}`;
+          await sharp(filePath)
+            .resize(newWidth, newHeight)
+            .toFile(resizedFilePath);
+
+          // Upload the resized image
+          const success = await this.uploadDocument(chatId, resizedFilePath);
+
+          // Delete the resized image file
+          await unlink(resizedFilePath);
+
+          return success;
+        }
+        return this.uploadDocument(chatId, filePath);
+      } catch (error) {
+        console.error('Error processing image:', error);
+        return false;
       }
-      return this.uploadDocument(chatId, filePath);
     }
+    // For other file types
+    return this.uploadDocument(chatId, filePath);
   }
 }
 
