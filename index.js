@@ -5,36 +5,7 @@ const fs = require("fs");
 const { program } = require("commander");
 const Uploader = require("./Uploader.js");
 const path = require("path");
-
-const nitewalker = {
-  apiId: 28686654,
-  apiHash: "87c9aff2fb7a74881b56c42e9e204a1d",
-  phoneNumber: "+31617940932",
-  password: "eexooRie9U",
-};
-
-const masterclass = {
-  apiId: 24926787,
-  apiHash: "46b0509502f455dab0feb762c5e2f18b",
-  phoneNumber: "+447389674740",
-  password: "eexooRie9U",
-};
-
-const junkies = {
-  apiId: 29270640,
-  apiHash: "b61327fb786f144b307892ef7d62e32c",
-  phoneNumber: "+37064003188",
-  password: "eexooRie9U",
-};
-
-const nicenstein = {
-  apiId: 19816201,
-  apiHash: "3b90c55743e161c9550bb3047ff2837a",
-  phoneNumber: "+37064005464",
-  password: "eexooRie9U",
-};
-
-const accounts = { nitewalker, masterclass, junkies, nicenstein };
+const accounts = require("./accounts.js");
 
 const startClient = async (account_name) => {
   const configDir = path.join("sessions", account_name);
@@ -120,60 +91,82 @@ program.parse(process.argv);
 
 const options = program.opts();
 
+const uploadSingleFile = async (client, chatId, filePath, deleteSource) => {
+  const uploader = new Uploader(client);
+  const success = await uploader.uploadFile(chatId, filePath);
+  
+  if (success && deleteSource) {
+    try {
+      fs.unlinkSync(filePath);
+      console.log(`Deleted source file: ${filePath}`);
+    } catch (error) {
+      console.error(`Failed to delete file ${filePath}:`, error.message);
+    }
+  }
+
+  return success;
+};
+
 const main = async () => {
   const { account, command, chatId, filePath, deleteSource, name } = options;
 
-  let uploadPath = `uploads/${filePath}`
-  // if(isDocker()){
-  //   uploadPath = `uploads/${filePath}`
-  // }
-
-//  const uploadPath = `uploads/${filePath}`;
-  // const uploadPath = `${filePath}`;
-
-  // console.log(
-  //   "Command:",
-  //   command,
-  //   "Account",
-  //   account,
-  //   "ChatId",
-  //   chatId,
-  //   "Filepath",
-  //   filePath
-  // );
+  // Handle absolute paths correctly
+  const uploadPath = filePath.startsWith('/') ? filePath : `uploads/${filePath}`;
 
   const client = await startClient(account);
 
   if (command === "upload" && chatId && uploadPath) {
-    // Check if the file exists
+    // Check if path exists
     if (!fs.existsSync(uploadPath)) {
-      console.error(`Error: File does not exist at path ${uploadPath}`);
+      console.error(`Error: Path does not exist: ${uploadPath}`);
       process.exit(1);
     }
 
-    const isPremiumAccount = await isPremium(client);
-    const fileSizeInGiB = getFileSizeInGiB(uploadPath);
-    const fileSizeLimit = isPremiumAccount ? 4 : 2; // 4 GiB for premium, 2 GiB for non-premium
+    const stats = fs.statSync(uploadPath);
+    
+    if (stats.isDirectory()) {
+      // Handle directory
+      const files = fs.readdirSync(uploadPath)
+        .filter(file => !file.startsWith('.')) // Skip hidden files
+        .map(file => path.join(uploadPath, file));
+      
+      console.log(`Found ${files.length} files in directory`);
+      
+      let successCount = 0;
+      let failCount = 0;
 
-    if (fileSizeInGiB > fileSizeLimit) {
-      console.error(
-        `Error: File size exceeds the limit of ${fileSizeLimit} GiB for ${
-          isPremiumAccount ? "premium" : "non-premium"
-        } accounts`
-      );
-      process.exit(1);
-    }
+      for (const file of files) {
+        console.log(`\nUploading: ${path.basename(file)}`);
+        const success = await uploadSingleFile(client, chatId, file, deleteSource);
+        if (success) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      }
 
-    const uploader = new Uploader(client);
-    const success = await uploader.uploadFile(chatId, uploadPath);
-    if (success && deleteSource) {
-      fs.unlinkSync(uploadPath);
-      console.log(`Deleted source file: ${uploadPath}`);
-    }
+      console.log(`\nUpload complete:`);
+      console.log(`Successfully uploaded: ${successCount} files`);
+      console.log(`Failed to upload: ${failCount} files`);
 
-    if (!success) {
-      console.error("Failed to upload file");
-      process.exit(1);
+      // Delete the source directory if requested and all files were uploaded successfully
+      if (deleteSource && failCount === 0) {
+        try {
+          fs.rmdirSync(uploadPath);
+          console.log(`Deleted source directory: ${uploadPath}`);
+        } catch (error) {
+          console.error(`Failed to delete directory ${uploadPath}:`, error.message);
+        }
+      } else if (deleteSource && failCount > 0) {
+        console.warn(`Directory not deleted due to ${failCount} failed uploads`);
+      }
+    } else {
+      // Handle single file
+      const success = await uploadSingleFile(client, chatId, uploadPath, deleteSource);
+      if (!success) {
+        console.error("Failed to upload file");
+        process.exit(1);
+      }
     }
     process.exit(0);
   } else if (command === "create") {

@@ -1,5 +1,5 @@
-const fs = require("fs");
-const { basename, extname } = require("path");
+const { unlink } = require("node:fs");
+const { basename, extname } = require("node:path");
 const ffmpeg = require("fluent-ffmpeg");
 const { Api } = require("telegram");
 const cliProgress = require("cli-progress");
@@ -9,7 +9,7 @@ class Uploader {
   constructor(client) {
     this.client = client;
     this.client.on("update", (update) => {
-      //console.log('Got update:', update)
+      console.log('Got update:', update)
     });
   }
 
@@ -58,7 +58,7 @@ class Uploader {
         ],
         workers: 3,
         progressCallback: (e) => {
-          const percentage = parseInt(e.toFixed(2) * 100);
+          const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
           progressBar.update(percentage); // Update the progress bar percentage
         },
       });
@@ -66,7 +66,7 @@ class Uploader {
       return true;
     } catch (error) {
       progressBar.stop();
-      console.error("Failed to upload video:", error);
+      console.error("Failed to upload document:", error);
       return false;
     }
   }
@@ -89,7 +89,7 @@ class Uploader {
         file: filePath,
         caption: fileName,
         progressCallback: (e) => {
-          const percentage = parseInt(e.toFixed(2) * 100);
+          const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
           progressBar.update(percentage); // Update the progress bar percentage
         },
       });
@@ -109,7 +109,8 @@ class Uploader {
 
     if (extension === ".mp4") {
       return this.uploadMP4File(chatId, filePath);
-    } else if ([".jpg", ".jpeg", ".png", ".gif"].includes(extension)) {
+    }
+    if ([".jpg", ".jpeg", ".png", ".gif"].includes(extension)) {
       // Check image dimensions
       const metadata = await sharp(filePath).metadata();
       const { width, height } = metadata;
@@ -128,13 +129,10 @@ class Uploader {
         const success = await this.uploadDocument(chatId, resizedFilePath);
 
         // Delete the resized image file
-        fs.unlinkSync(resizedFilePath);
+        unlink(resizedFilePath);
 
         return success;
-      } else {
-        return this.uploadDocument(chatId, filePath);
       }
-    } else {
       return this.uploadDocument(chatId, filePath);
     }
   }
