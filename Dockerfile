@@ -1,31 +1,50 @@
-FROM node:22-alpine
+FROM node:18-alpine AS builder
 
-# Set the working directory in the container
 WORKDIR /usr/src/app
-RUN mkdir -p /usr/src/app/sessions
-RUN mkdir -p /usr/src/app/uploads
 
-# Test internet connectivity
-RUN apk add --no-cache curl && \
-    curl -I https://www.google.com
+# Install build dependencies
+RUN apk add --no-cache python3 make g++ curl git
 
-# Install FFmpeg from the edge repository
-RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community ffmpeg
+# Set npm config to use python3
+ENV npm_config_python=/usr/bin/python3
 
-# Copy the package.json and package-lock.json (if available)
+# Copy package files
 COPY package*.json ./
 
-# Install any needed packages specified in package.json
-RUN npm install
+# Install dependencies including pkg locally
+RUN npm install --build-from-source && \
+    npm install -g pkg
 
-# Bundle your app's source code inside the Docker container
+# Create a dummy accounts.js file if it doesn't exist
+RUN touch accounts.js
+
+# Copy source files
 COPY . .
 
-# Define environment variable
-ENV NODE_ENV production
+# Create dist directory
+RUN mkdir -p dist
 
-# Set the executable for the container
-ENTRYPOINT ["node", "index.js"]
+# Build for the same architecture as the base image
+RUN pkg package.json \
+    --compress GZip \
+    --public-packages "*" \
+    --public \
+    --no-bytecode \
+    --target node18-linux-$(uname -m) \
+    --output /usr/src/app/dist/uploader-linux-docker
 
-# Set default CMD arguments (can be overridden from the Docker command line)
+FROM alpine:latest
+
+WORKDIR /app
+
+# Copy the built binary from the builder stage
+COPY --from=builder /usr/src/app/dist/uploader-linux-docker /app/uploader
+
+# Install runtime dependencies
+RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community ffmpeg
+
+# Make the binary executable
+RUN chmod +x /app/uploader
+
+ENTRYPOINT ["/app/uploader"]
 CMD ["--help"]

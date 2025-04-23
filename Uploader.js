@@ -1,3 +1,4 @@
+const { stat } = require("node:fs/promises"); // Add stat
 const { unlink } = require("node:fs/promises"); // Change to promises version
 const { basename, extname } = require("node:path");
 const ffmpeg = require("fluent-ffmpeg");
@@ -17,12 +18,32 @@ class Uploader {
     return new Promise((resolve, reject) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
         if (err) {
-          reject(err);
+          console.error('FFprobe error:', err.message);
+          // Return default values if FFprobe fails
+          resolve({
+            width: 1920,  // default HD width
+            height: 1080, // default HD height
+            duration: 0   // default duration
+          });
         } else {
-          const { width, height, duration } = metadata.streams.find(
-            (stream) => stream.codec_type === "video"
-          );
-          resolve({ width, height, duration });
+          try {
+            const videoStream = metadata.streams.find(
+              (stream) => stream.codec_type === "video"
+            );
+            if (!videoStream) {
+              throw new Error('No video stream found');
+            }
+            const { width, height, duration } = videoStream;
+            resolve({ width, height, duration });
+          } catch (error) {
+            console.error('Error parsing video metadata:', error.message);
+            // Return default values if parsing fails
+            resolve({
+              width: 1920,
+              height: 1080,
+              duration: 0
+            });
+          }
         }
       });
     });
@@ -30,7 +51,6 @@ class Uploader {
 
   async uploadMP4File(chatId, filePath) {
     const { width, height, duration } = await this.getVideoInfo(filePath);
-    // console.log(width, height, duration);
     const fileName = basename(filePath);
     const progressBar = new cliProgress.SingleBar(
       {
@@ -42,26 +62,40 @@ class Uploader {
     );
 
     try {
-      progressBar.start(100, 0); // Start the progress bar with a total value of 100 and starting value of 0
+      progressBar.start(100, 0);
 
-      await this.client.sendFile(chatId, {
-        file: filePath,
-        caption: fileName,
-        mimeType: "video/mp4",
-        attributes: [
-          new Api.DocumentAttributeVideo({
-            duration: duration,
-            h: height,
-            w: width,
-            supportsStreaming: true,
-          }),
-        ],
-        workers: 3,
-        progressCallback: (e) => {
-          const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
-          progressBar.update(percentage); // Update the progress bar percentage
-        },
-      });
+      const upload = async (retryCount = 0) => {
+        try {
+          await this.client.sendFile(chatId, {
+            file: filePath,
+            caption: fileName,
+            mimeType: "video/mp4",
+            attributes: [
+              new Api.DocumentAttributeVideo({
+                duration: duration,
+                h: height,
+                w: width,
+                supportsStreaming: true,
+              }),
+            ],
+            progressCallback: (e) => {
+              const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
+              progressBar.update(percentage);
+            },
+          });
+          return true;
+        } catch (error) {
+          if (error.code === 420) { // FloodWaitError
+            const waitSeconds = error.seconds;
+            console.log(`\nFlood wait error. Waiting ${waitSeconds} seconds before retrying...`);
+            await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+            return upload(retryCount + 1);
+          }
+          throw error; // Re-throw other errors
+        }
+      };
+
+      await upload();
       progressBar.stop();
       return true;
     } catch (error) {
@@ -83,16 +117,31 @@ class Uploader {
     );
 
     try {
-      progressBar.start(100, 0); // Start the progress bar with a total value of 100 and starting value of 0
+      progressBar.start(100, 0);
 
-      await this.client.sendFile(chatId, {
-        file: filePath,
-        caption: fileName,
-        progressCallback: (e) => {
-          const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
-          progressBar.update(percentage); // Update the progress bar percentage
-        },
-      });
+      const upload = async (retryCount = 0) => {
+        try {
+          await this.client.sendFile(chatId, {
+            file: filePath,
+            caption: fileName,
+            progressCallback: (e) => {
+              const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
+              progressBar.update(percentage);
+            },
+          });
+          return true;
+        } catch (error) {
+          if (error.code === 420) { // FloodWaitError
+            const waitSeconds = error.seconds;
+            console.log(`\nFlood wait error. Waiting ${waitSeconds} seconds before retrying...`);
+            await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+            return upload(retryCount + 1);
+          }
+          throw error; // Re-throw other errors
+        }
+      };
+
+      await upload();
       progressBar.stop();
       return true;
     } catch (error) {
@@ -103,7 +152,20 @@ class Uploader {
   }
 
   async uploadFile(chatId, filePath) {
+  const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB limit
+
     const extension = extname(filePath).toLowerCase();
+
+    try {
+      const stats = await stat(filePath);
+      if (stats.size > MAX_FILE_SIZE_BYTES) {
+        console.log(`\nSkipping large file (over ${MAX_FILE_SIZE_BYTES / (1024*1024*1024)}GB): ${basename(filePath)}`);
+        return false; // Indicate skip/failure
+      }
+    } catch (error) {
+      console.error(`\nError getting file stats for ${basename(filePath)}:`, error.message);
+      return false; // Indicate failure
+    }
 
     if (extension === ".mp4") {
       return this.uploadMP4File(chatId, filePath);
@@ -113,24 +175,34 @@ class Uploader {
         // Check image dimensions
         const metadata = await sharp(filePath).metadata();
         const { width, height } = metadata;
+        
+        console.log(`Original dimensions: ${width}x${height}`);
 
         // Telegram has limits on image dimensions
-        const MAX_DIMENSION = 10000;
-        const RESIZE_RATIO = 0.5; // More aggressive resize
+        const MAX_DIMENSION = 5000; // Reduced from 10000 to be safer
+        const MAX_COMBINED_DIMENSIONS = 9000; // Reduced from 10000 to be safer
 
-        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        // Always resize large images
+        if (width > MAX_DIMENSION || height > MAX_DIMENSION || (width + height) > MAX_COMBINED_DIMENSIONS) {
           // Calculate new dimensions while maintaining aspect ratio
           const aspectRatio = width / height;
-          let newWidth = width;
-          let newHeight = height;
+          let newWidth, newHeight;
 
-          if (width > height && width > MAX_DIMENSION) {
-            newWidth = MAX_DIMENSION;
-            newHeight = Math.round(MAX_DIMENSION / aspectRatio);
-          } else if (height > MAX_DIMENSION) {
+          // Calculate dimensions based on combined limit
+          newWidth = Math.min(Math.sqrt(MAX_COMBINED_DIMENSIONS * aspectRatio), MAX_DIMENSION);
+          newHeight = newWidth / aspectRatio;
+
+          // Ensure height is also within limits
+          if (newHeight > MAX_DIMENSION) {
             newHeight = MAX_DIMENSION;
-            newWidth = Math.round(MAX_DIMENSION * aspectRatio);
+            newWidth = newHeight * aspectRatio;
           }
+
+          // Round the dimensions
+          newWidth = Math.floor(newWidth);
+          newHeight = Math.floor(newHeight);
+
+          console.log(`Resizing to: ${newWidth}x${newHeight}`);
 
           // Reduce image size
           const resizedFilePath = `${filePath}_resized${extension}`;
@@ -146,6 +218,8 @@ class Uploader {
 
           return success;
         }
+        
+        console.log(`Using original dimensions: ${width}x${height}`);
         return this.uploadDocument(chatId, filePath);
       } catch (error) {
         console.error('Error processing image:', error);
