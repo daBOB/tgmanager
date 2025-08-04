@@ -1,46 +1,48 @@
-const { stat } = require("node:fs/promises"); // Add stat
-const { unlink } = require("node:fs/promises"); // Change to promises version
-const { basename, extname } = require("node:path");
-const ffmpeg = require("fluent-ffmpeg");
-const { Api } = require("telegram");
-const cliProgress = require("cli-progress");
-const sharp = require('sharp');
-const logger = require('./logger');
-const config = require('./config');
+import { stat, unlink } from 'fs/promises';
+import { basename, extname } from 'path';
+import ffmpeg from 'fluent-ffmpeg';
+import { Api } from 'telegram';
+import cliProgress from 'cli-progress';
+import sharp from 'sharp';
+import logger, { logUpload } from './logger.js';
+import config from './config.js';
+import type { TelegramClient, VideoInfo, UploadOptions } from './types/index.js';
 
-class Uploader {
-  constructor(client) {
+export class Uploader {
+  private client: TelegramClient;
+
+  constructor(client: TelegramClient) {
     this.client = client;
-    this.client.on("update", (update) => {
-      logger.debug('Telegram update received', { updateType: update.className });
+    (this.client as any).on('update', (update: Api.TypeUpdate) => {
+      logger.debug('Telegram update received', { updateType: (update as any).className });
     });
   }
 
-  async checkPremiumStatus() {
+  async checkPremiumStatus(): Promise<boolean> {
     try {
       const result = await this.client.invoke(
         new Api.users.GetFullUser({
-          id: "Me",
+          id: 'Me',
         })
       );
       if (!result || !result.users || result.users.length === 0) {
-        logger.warn("checkPremiumStatus: Invalid result from API");
+        logger.warn('checkPremiumStatus: Invalid result from API');
         return false;
       }
-      const { premium } = result.users[0];
-      if (!premium) {
-        logger.debug("checkPremiumStatus: User does not have premium");
+      const user = result.users[0] as Api.User;
+      if (!user.premium) {
+        logger.debug('checkPremiumStatus: User does not have premium');
         return false;
       }
-      return premium;
+      return true;
     } catch (error) {
-      logger.error("Failed to check premium status", { error: error.message });
+      logger.error('Failed to check premium status', { error: (error as Error).message });
       return false;
     }
   }
 
-  async getVideoInfo(filePath) {
-    return new Promise((resolve, reject) => {
+  async getVideoInfo(filePath: string): Promise<VideoInfo> {
+    return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
         if (err) {
           logger.warn('FFprobe error, using defaults', { error: err.message, file: basename(filePath) });
@@ -53,15 +55,19 @@ class Uploader {
         } else {
           try {
             const videoStream = metadata.streams.find(
-              (stream) => stream.codec_type === "video"
+              (stream) => stream.codec_type === 'video'
             );
             if (!videoStream) {
               throw new Error('No video stream found');
             }
-            const { width, height, duration } = videoStream;
-            resolve({ width, height, duration });
+            const { width = 1920, height = 1080, duration = '0' } = videoStream;
+            resolve({ 
+              width, 
+              height, 
+              duration: parseFloat(duration) 
+            });
           } catch (error) {
-            logger.warn('Error parsing video metadata, using defaults', { error: error.message });
+            logger.warn('Error parsing video metadata, using defaults', { error: (error as Error).message });
             // Return default values if parsing fails
             resolve({
               width: config.fileProcessing.video.defaultWidth,
@@ -74,7 +80,7 @@ class Uploader {
     });
   }
 
-  async uploadMP4File(chatId, filePath) {
+  async uploadMP4File(chatId: string, filePath: string): Promise<boolean> {
     const startTime = Date.now();
     const { width, height, duration } = await this.getVideoInfo(filePath);
     const fileName = basename(filePath);
@@ -91,29 +97,29 @@ class Uploader {
     try {
       progressBar.start(100, 0);
 
-      const upload = async (retryCount = 0) => {
+      const upload = async (retryCount = 0): Promise<boolean> => {
         try {
           await this.client.sendFile(chatId, {
             file: filePath,
             caption: fileName,
-            mimeType: "video/mp4",
+            mimeType: 'video/mp4',
             attributes: [
               new Api.DocumentAttributeVideo({
-                duration: duration,
+                duration: Math.round(duration),
                 h: height,
                 w: width,
                 supportsStreaming: true,
               }),
             ],
-            progressCallback: (e) => {
-              const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
+            progressCallback: (e: number) => {
+              const percentage = Math.floor(e * 100);
               progressBar.update(percentage);
             },
-          });
+          } as UploadOptions);
           return true;
-        } catch (error) {
+        } catch (error: any) {
           if (error.code === 420) { // FloodWaitError
-            const waitSeconds = error.seconds;
+            const waitSeconds = error.seconds as number;
             const waitWithBuffer = Math.ceil(waitSeconds * config.telegram.floodWaitMultiplier);
             logger.warn(`Flood wait error. Waiting ${waitWithBuffer} seconds before retry`, {
               originalWait: waitSeconds,
@@ -131,22 +137,22 @@ class Uploader {
 
       await upload();
       progressBar.stop();
-      const duration = Date.now() - startTime;
-      logger.logUpload(fileName, chatId, fileSize, duration);
+      const uploadDuration = Date.now() - startTime;
+      logUpload(fileName, chatId, fileSize, uploadDuration);
       return true;
     } catch (error) {
       progressBar.stop();
-      logger.error("Failed to upload MP4 file", { 
+      logger.error('Failed to upload MP4 file', { 
         fileName, 
         chatId, 
-        error: error.message,
-        code: error.code 
+        error: (error as Error).message,
+        code: (error as any).code 
       });
       return false;
     }
   }
 
-  async uploadDocument(chatId, filePath) {
+  async uploadDocument(chatId: string, filePath: string): Promise<boolean> {
     const startTime = Date.now();
     const fileName = basename(filePath);
     const fileSize = (await stat(filePath)).size;
@@ -162,20 +168,20 @@ class Uploader {
     try {
       progressBar.start(100, 0);
 
-      const upload = async (retryCount = 0) => {
+      const upload = async (retryCount = 0): Promise<boolean> => {
         try {
           await this.client.sendFile(chatId, {
             file: filePath,
             caption: fileName,
-            progressCallback: (e) => {
-              const percentage = Number.parseInt((e.toFixed(2) * 100).toString(), 10);
+            progressCallback: (e: number) => {
+              const percentage = Math.floor(e * 100);
               progressBar.update(percentage);
             },
           });
           return true;
-        } catch (error) {
+        } catch (error: any) {
           if (error.code === 420) { // FloodWaitError
-            const waitSeconds = error.seconds;
+            const waitSeconds = error.seconds as number;
             const waitWithBuffer = Math.ceil(waitSeconds * config.telegram.floodWaitMultiplier);
             logger.warn(`Flood wait error. Waiting ${waitWithBuffer} seconds before retry`, {
               originalWait: waitSeconds,
@@ -193,22 +199,22 @@ class Uploader {
 
       await upload();
       progressBar.stop();
-      const duration = Date.now() - startTime;
-      logger.logUpload(fileName, chatId, fileSize, duration);
+      const uploadDuration = Date.now() - startTime;
+      logUpload(fileName, chatId, fileSize, uploadDuration);
       return true;
     } catch (error) {
       progressBar.stop();
-      logger.error("Failed to upload document", { 
+      logger.error('Failed to upload document', { 
         fileName, 
         chatId, 
-        error: error.message,
-        code: error.code 
+        error: (error as Error).message,
+        code: (error as any).code 
       });
       return false;
     }
   }
 
-  async uploadFile(chatId, filePath) {
+  async uploadFile(chatId: string, filePath: string): Promise<boolean> {
     // Check if account has premium status
     const isPremium = await this.checkPremiumStatus();
     const MAX_FILE_SIZE_BYTES = isPremium
@@ -233,19 +239,19 @@ class Uploader {
     } catch (error) {
       logger.error(`Error getting file stats`, { 
         fileName: basename(filePath), 
-        error: error.message 
+        error: (error as Error).message 
       });
       return false; // Indicate failure
     }
 
-    if (extension === ".mp4") {
+    if (extension === '.mp4') {
       return this.uploadMP4File(chatId, filePath);
     }
     if (config.fileProcessing.image.supportedFormats.includes(extension)) {
       try {
         // Check image dimensions
         const metadata = await sharp(filePath).metadata();
-        const { width, height } = metadata;
+        const { width = 0, height = 0 } = metadata;
         
         logger.debug(`Image dimensions`, { width, height, file: basename(filePath) });
 
@@ -257,7 +263,7 @@ class Uploader {
         if (width > MAX_DIMENSION || height > MAX_DIMENSION || (width + height) > MAX_COMBINED_DIMENSIONS) {
           // Calculate new dimensions while maintaining aspect ratio
           const aspectRatio = width / height;
-          let newWidth, newHeight;
+          let newWidth: number, newHeight: number;
 
           // Calculate dimensions based on combined limit
           newWidth = Math.min(Math.sqrt(MAX_COMBINED_DIMENSIONS * aspectRatio), MAX_DIMENSION);
@@ -299,7 +305,7 @@ class Uploader {
       } catch (error) {
         logger.error('Error processing image', { 
           file: basename(filePath),
-          error: error.message 
+          error: (error as Error).message 
         });
         return false;
       }
@@ -309,4 +315,4 @@ class Uploader {
   }
 }
 
-module.exports = Uploader;
+export default Uploader;

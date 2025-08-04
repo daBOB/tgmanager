@@ -2,37 +2,47 @@ const { Api, TelegramClient } = require("telegram");
 const { StoreSession } = require("telegram/sessions");
 const input = require("input");
 const fs = require("fs");
+const os = require("os");
 const { program } = require("commander");
 const Uploader = require("./Uploader.js");
 const path = require("path");
-const accounts = require("./accounts.js");
+const config = require("./config.js");
+const logger = require("./logger.js");
+const { validatePath, validateChatId, validateAccountName, validateCommand, sanitizeInput } = require("./utils/validation.js");
 
 const startClient = async (account_name) => {
-  const configDir = path.join("sessions", account_name);
+  const configDir = path.join(config.app.sessionDir, account_name);
   // Ensure the config directory exists
   if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
   }
-  //console.log("Config directory:", configDir);
+  logger.debug(`Session directory: ${configDir}`);
   const storeSession = new StoreSession(configDir);
-  const { apiId, apiHash, phoneNumber, password } = accounts[account_name];
+  
+  // Validate account exists
+  const accountConfig = config.accounts[account_name];
+  if (!accountConfig) {
+    throw new Error(`Account '${account_name}' not found in configuration`);
+  }
+  
+  const { apiId, apiHash, phoneNumber, password } = accountConfig;
 
   const client = new TelegramClient(storeSession, apiId, apiHash, {
-    connectionRetries: 50,
-    useWSS: true
+    connectionRetries: config.telegram.connectionRetries,
+    useWSS: config.telegram.useWSS
   });
 
 client.on("disconnect", (err) => {
   if (err) {
-    console.error("Client disconnected with error:", err);
+    logger.error("Client disconnected with error", { error: err.message });
   } else {
-    console.log("Client disconnected");
+    logger.info("Client disconnected");
   }
   process.exit(1);
 });
 
 client.on("error", (err) => {
-  console.error("Client error:", err);
+  logger.error("Client error", { error: err.message, code: err.code });
 });
 
   await client.start({
@@ -40,13 +50,11 @@ client.on("error", (err) => {
     password: async () => password,
     phoneCode: async () =>
       await input.text("Please enter the code you received: "),
-    onError: (err) => console.log(err),
+    onError: (err) => logger.error("Authentication error", { error: err.message }),
   });
-  console.log("You should now be connected.");
+  logger.info("Successfully connected to Telegram");
   client.session.save();
-  //console.log(client.session.save()); // Save this string to avoid logging in again
   return client;
-  //await client.sendMessage("me", { message: "Hello!" });
 };
 
 
@@ -64,17 +72,17 @@ const isPremium = async (client) => {
       })
     );
     if (!result || !result.users || result.users.length === 0) {
-      console.error("isPremium: result is null or invalid");
+      logger.warn("isPremium: Invalid result from API");
       return false;
     }
     const { premium } = result.users[0];
     if (!premium) {
-      console.error("isPremium: premium is null");
+      logger.debug("isPremium: User does not have premium");
       return false;
     }
     return premium;
   } catch (error) {
-    console.error("isPremium: Error", error);
+    logger.error("Failed to check premium status", { error: error.message });
     return false;
   }
 };
@@ -98,9 +106,9 @@ const uploadSingleFile = async (client, chatId, filePath, deleteSource) => {
   if (success && deleteSource) {
     try {
       fs.unlinkSync(filePath);
-      console.log(`Deleted source file: ${filePath}`);
+      logger.info(`Deleted source file: ${filePath}`);
     } catch (error) {
-      console.error(`Failed to delete file ${filePath}:`, error.message);
+      logger.error(`Failed to delete file`, { filePath, error: error.message });
     }
   }
 
@@ -108,19 +116,40 @@ const uploadSingleFile = async (client, chatId, filePath, deleteSource) => {
 };
 
 const main = async () => {
-  const { account, command, chatId, filePath, deleteSource, name } = options;
-
-  // Handle absolute paths correctly
-  const uploadPath = filePath.startsWith('/') ? filePath : `uploads/${filePath}`;
-
-  const client = await startClient(account);
-
-  if (command === "upload" && chatId && uploadPath) {
-    // Check if path exists
-    if (!fs.existsSync(uploadPath)) {
-      console.error(`Error: Path does not exist: ${uploadPath}`);
-      process.exit(1);
+  try {
+    const { account, command, chatId, filePath, deleteSource, name } = options;
+    
+    // Validate inputs
+    validateCommand(command, options);
+    validateAccountName(account, Object.keys(config.accounts));
+    
+    if (chatId) {
+      validateChatId(chatId);
     }
+
+    let uploadPath;
+    if (filePath) {
+      // Handle absolute paths correctly with validation
+      if (filePath.startsWith('/')) {
+        uploadPath = filePath;
+      } else {
+        uploadPath = validatePath(filePath, config.app.uploadDir);
+      }
+      
+      // Ensure the uploads directory exists
+      if (!fs.existsSync(config.app.uploadDir)) {
+        fs.mkdirSync(config.app.uploadDir, { recursive: true });
+      }
+    }
+
+    const client = await startClient(account);
+
+    if (command === "upload" && chatId && uploadPath) {
+      // Check if path exists
+      if (!fs.existsSync(uploadPath)) {
+        logger.error(`Path does not exist: ${uploadPath}`);
+        process.exit(1);
+      }
 
     const stats = fs.statSync(uploadPath);
     
@@ -130,13 +159,13 @@ const main = async () => {
         .filter(file => !file.startsWith('.')) // Skip hidden files
         .map(file => path.join(uploadPath, file));
       
-      console.log(`Found ${files.length} files in directory`);
+      logger.info(`Found ${files.length} files in directory ${uploadPath}`);
       
       let successCount = 0;
       let failCount = 0;
 
       for (const file of files) {
-        console.log(`\nUploading: ${path.basename(file)}`);
+        logger.info(`Starting upload: ${path.basename(file)}`);
         const success = await uploadSingleFile(client, chatId, file, deleteSource);
         if (success) {
           successCount++;
@@ -145,49 +174,50 @@ const main = async () => {
         }
       }
 
-      console.log(`\nUpload complete:`);
-      console.log(`Successfully uploaded: ${successCount} files`);
-      console.log(`Failed to upload: ${failCount} files`);
+      logger.info(`Upload batch complete`, {
+        total: files.length,
+        successful: successCount,
+        failed: failCount
+      });
 
       // Delete the source directory if requested and all files were uploaded successfully
       if (deleteSource && failCount === 0) {
         try {
-          fs.rmdirSync(uploadPath);
-          console.log(`Deleted source directory: ${uploadPath}`);
+          fs.rmSync(uploadPath, { recursive: false });
+          logger.info(`Deleted source directory: ${uploadPath}`);
         } catch (error) {
-          console.error(`Failed to delete directory ${uploadPath}:`, error.message);
+          logger.error(`Failed to delete directory`, { path: uploadPath, error: error.message });
         }
       } else if (deleteSource && failCount > 0) {
-        console.warn(`Directory not deleted due to ${failCount} failed uploads`);
+        logger.warn(`Directory not deleted due to failed uploads`, { failCount });
       }
     } else {
       // Handle single file
       const success = await uploadSingleFile(client, chatId, uploadPath, deleteSource);
       if (!success) {
-        console.error("Failed to upload file");
+        logger.error("Failed to upload file");
         process.exit(1);
       }
     }
     process.exit(0);
   } else if (command === "create") {
-    if (!name) {
-      console.error("Error: Name is required for the create command.");
-      process.exit(1);
-    }
+    const sanitizedName = sanitizeInput(name);
 
     const result = await client.invoke(
       new Api.channels.CreateChannel({
-        title: name,
+        title: sanitizedName,
         about: "",
         broadcast: true,
         megagroup: false,
       })
     );
     const channelId = "-100" + result.chats[0].id.toJSNumber();
-    console.log("Channel ID:", channelId);
-    // Add your code for the create command here
-    console.log(`Creating with name: ${name}`);
+    logger.info("Channel created successfully", { channelId, name: sanitizedName });
     process.exit(0);
+  }
+  } catch (error) {
+    logger.error("Fatal error", { error: error.message, stack: error.stack });
+    process.exit(1);
   }
 };
 
