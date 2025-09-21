@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import logger from './logger.js';
 
 // Determine if running as compiled executable
@@ -15,9 +16,16 @@ const getBaseDirectory = (): string => {
     return dirname(process.execPath);
   } else {
     // For source code, use project root
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    return dirname(__dirname);
+    // Handle both ESM and CJS
+    if (typeof __dirname !== 'undefined') {
+      // CommonJS
+      return dirname(__dirname);
+    } else {
+      // ES modules
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      return dirname(__dirname);
+    }
   }
 };
 
@@ -85,9 +93,16 @@ export const getConfigDirectory = (): string => {
     return join(homedir(), '.tgmanager');
   } else {
     // For development, use project directory
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    return dirname(__dirname);
+    // Handle both ESM and CJS
+    if (typeof __dirname !== 'undefined') {
+      // CommonJS
+      return dirname(__dirname);
+    } else {
+      // ES modules
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      return dirname(__dirname);
+    }
   }
 };
 

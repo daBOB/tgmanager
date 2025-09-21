@@ -32,6 +32,7 @@ lerna-debug.log*
 
 # Build output
 dist/
+dist-cjs/
 build/
 
 # OS files

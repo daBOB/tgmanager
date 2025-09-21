@@ -3,7 +3,7 @@ import { basename, extname } from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import { Api } from 'telegram';
 import cliProgress from 'cli-progress';
-import sharp from 'sharp';
+import { getSharp } from './utils/sharp-loader.js';
 import logger, { logUpload } from './logger.js';
 import config from './config.js';
 import type { TelegramClient, VideoInfo, UploadOptions } from './types/index.js';
@@ -249,6 +249,16 @@ export class Uploader {
     }
     if (config.fileProcessing.image.supportedFormats.includes(extension)) {
       try {
+        // Load sharp using the robust loader
+        const sharp = await getSharp();
+        if (!sharp) {
+          logger.warn('Sharp not available, skipping image processing', {
+            file: basename(filePath)
+          });
+          // Fall back to regular document upload without processing
+          return await this.uploadDocument(chatId, filePath);
+        }
+
         // Check image dimensions
         const metadata = await sharp(filePath).metadata();
         const { width = 0, height = 0 } = metadata;
@@ -303,11 +313,13 @@ export class Uploader {
         logger.debug(`Using original dimensions`, { width, height, file: basename(filePath) });
         return this.uploadDocument(chatId, filePath);
       } catch (error) {
-        logger.error('Error processing image', { 
+        logger.error('Error processing image', {
           file: basename(filePath),
-          error: (error as Error).message 
+          error: (error as Error).message
         });
-        return false;
+        // Fall back to regular document upload if image processing fails
+        logger.info('Falling back to document upload', { file: basename(filePath) });
+        return await this.uploadDocument(chatId, filePath);
       }
     }
     // For other file types

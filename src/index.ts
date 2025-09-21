@@ -1,5 +1,4 @@
 import { Api, TelegramClient } from 'telegram';
-import { StoreSession } from 'telegram/sessions/index.js';
 import input from 'input';
 import { existsSync, mkdirSync, readdirSync, statSync, rmSync, unlinkSync } from 'fs';
 import { Command } from 'commander';
@@ -8,6 +7,7 @@ import { join, basename } from 'path';
 import config from './config.js';
 import logger from './logger.js';
 import { validatePath, validateChatId, validateAccountName, validateCommand, sanitizeInput } from './utils/validation.js';
+import { createSession } from './session-helper.js';
 import type { CommandOptions } from './types/index.js';
 
 const startClient = async (account_name: string): Promise<TelegramClient> => {
@@ -17,7 +17,7 @@ const startClient = async (account_name: string): Promise<TelegramClient> => {
     mkdirSync(configDir, { recursive: true });
   }
   logger.debug(`Session directory: ${configDir}`);
-  const storeSession = new StoreSession(configDir);
+  const session = createSession(configDir);
   
   // Validate account exists
   const accountConfig = config.accounts[account_name];
@@ -27,7 +27,7 @@ const startClient = async (account_name: string): Promise<TelegramClient> => {
   
   const { apiId, apiHash, phoneNumber, password } = accountConfig;
 
-  const client = new TelegramClient(storeSession, apiId, apiHash, {
+  const client = new TelegramClient(session, apiId, apiHash, {
     connectionRetries: config.telegram.connectionRetries,
     useWSS: config.telegram.useWSS
   });

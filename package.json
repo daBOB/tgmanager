@@ -1,7 +1,7 @@
 {
   "name": "uploader",
-  "main": "index.js",
-  "bin": "index.js",
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
   "type": "module",
   "pkg": {
     "targets": [
@@ -17,8 +17,12 @@
       "node_modules/fluent-ffmpeg/**/*"
     ],
     "scripts": [
-      "index.js",
-      "Uploader.js"
+      "dist/index.js",
+      "dist/Uploader.js",
+      "dist/config.js",
+      "dist/config-loader.js",
+      "dist/logger.js",
+      "dist/**/*.js"
     ]
   },
   "dependencies": {
@@ -37,6 +41,7 @@
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
+    "esbuild": "^0.25.8",
     "eslint": "^8.56.0",
     "pkg": "^5.8.1",
     "tsx": "^4.7.0",
@@ -45,12 +50,14 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build:ts": "tsc",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
     "start": "node dist/index.js",
     "prebuild": "mkdir -p dist",
-    "build-native": "npm run build:ts && pkg dist/index.js --compress GZip --public-packages \"*\" --public --no-bytecode --target node18-win-x64 --output dist/uploader-win.exe && pkg dist/index.js --compress GZip --public-packages \"*\" --public --no-bytecode --target node18-macos-x64 --output dist/uploader-macos && pkg dist/index.js --compress GZip --public-packages \"*\" --public --no-bytecode --target node18-linux-x64 --output dist/uploader-linux",
+    "bundle-pkg": "node scripts/bundle-for-pkg.cjs",
+    "build-native": "npm run build:ts && npm run bundle-pkg && npx pkg dist-pkg/bundled.cjs --compress GZip --public-packages \"*\" --public --no-bytecode --target node18-win-x64 --output dist/uploader-win.exe && npx pkg dist-pkg/bundled.cjs --compress GZip --public-packages \"*\" --public --no-bytecode --target node18-macos-x64 --output dist/uploader-macos && npx pkg dist-pkg/bundled.cjs --compress GZip --public-packages \"*\" --public --no-bytecode --target node18-linux-x64 --output dist/uploader-linux",
     "build-docker": "docker build -t uploader-builder . && docker run --rm -v $(pwd)/dist:/usr/src/app/dist uploader-builder",
     "build": "npm run build:ts && npm run build-native && npm run build-docker",
-    "clean": "rm -rf dist/*",
+    "clean": "rm -rf dist/* dist-cjs/*",
     "package": "npm run clean && npm run build",
     "type-check": "tsc --noEmit",
     "lint": "eslint src/**/*.ts"
