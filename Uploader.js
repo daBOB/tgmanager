@@ -4,7 +4,7 @@ const { basename, extname } = require("node:path");
 const ffmpeg = require("fluent-ffmpeg");
 const { Api } = require("telegram");
 const cliProgress = require("cli-progress");
-const sharp = require('sharp');
+const { getSharp } = require('./utils/sharp-loader');
 const logger = require('./logger');
 const config = require('./config');
 
@@ -243,10 +243,20 @@ class Uploader {
     }
     if (config.fileProcessing.image.supportedFormats.includes(extension)) {
       try {
+        // Load sharp using the robust loader
+        const sharp = await getSharp();
+        if (!sharp) {
+          logger.warn('Sharp not available, skipping image processing', {
+            file: basename(filePath)
+          });
+          // Fall back to regular document upload without processing
+          return await this.uploadDocument(chatId, filePath);
+        }
+
         // Check image dimensions
         const metadata = await sharp(filePath).metadata();
-        const { width, height } = metadata;
-        
+        const { width = 0, height = 0 } = metadata;
+
         logger.debug(`Image dimensions`, { width, height, file: basename(filePath) });
 
         // Telegram has limits on image dimensions
@@ -273,8 +283,8 @@ class Uploader {
           newWidth = Math.floor(newWidth);
           newHeight = Math.floor(newHeight);
 
-          logger.info(`Resizing image`, { 
-            original: `${width}x${height}`, 
+          logger.info(`Resizing image`, {
+            original: `${width}x${height}`,
             new: `${newWidth}x${newHeight}`,
             file: basename(filePath)
           });
@@ -293,15 +303,17 @@ class Uploader {
 
           return success;
         }
-        
+
         logger.debug(`Using original dimensions`, { width, height, file: basename(filePath) });
         return this.uploadDocument(chatId, filePath);
       } catch (error) {
-        logger.error('Error processing image', { 
+        logger.error('Error processing image', {
           file: basename(filePath),
-          error: error.message 
+          error: error.message
         });
-        return false;
+        // Fall back to regular document upload if image processing fails
+        logger.info('Falling back to document upload', { file: basename(filePath) });
+        return await this.uploadDocument(chatId, filePath);
       }
     }
     // For other file types

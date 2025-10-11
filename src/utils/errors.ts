@@ -72,6 +72,18 @@ export class FloodWaitError extends Error {
   }
 }
 
+export class AuthKeyDuplicatedError extends Error {
+  code: number;
+  timestamp: Date;
+
+  constructor(message = 'Authentication key is being used from another location') {
+    super(message);
+    this.name = 'AuthKeyDuplicatedError';
+    this.code = 406;
+    this.timestamp = new Date();
+  }
+}
+
 interface ErrorContext {
   [key: string]: unknown;
 }
@@ -90,6 +102,13 @@ export function handleError(error: Error, context: ErrorContext = {}): string {
   } else if (error instanceof FloodWaitError) {
     logger.info('Rate limited by Telegram', {
       waitSeconds: error.seconds,
+      ...context
+    });
+  } else if (error instanceof AuthKeyDuplicatedError) {
+    logger.error('Authentication key duplicated', {
+      errorType: error.name,
+      code: error.code,
+      message: 'The same session is being used from multiple locations',
       ...context
     });
   } else {
@@ -125,7 +144,15 @@ export function getUserFriendlyMessage(error: Error): string {
   if (error instanceof FloodWaitError) {
     return `Rate limited. Please wait ${error.seconds} seconds before trying again.`;
   }
-  
+
+  if (error instanceof AuthKeyDuplicatedError) {
+    return `Authentication error: The same session is being used from another location. Please:\n` +
+           `1. Stop all other running instances\n` +
+           `2. Wait a few minutes\n` +
+           `3. Try again\n` +
+           `If the problem persists, clear your session: rm -rf ~/.tgmanager/sessions/YOUR_ACCOUNT/*`;
+  }
+
   if (error instanceof TelegramUploadError) {
     switch (error.code) {
       case 'FILE_TOO_LARGE':

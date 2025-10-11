@@ -8,6 +8,8 @@ import config from './config.js';
 import logger from './logger.js';
 import { validatePath, validateChatId, validateAccountName, validateCommand, sanitizeInput } from './utils/validation.js';
 import { createSession } from './session-helper.js';
+import { createProcessLock } from './utils/process-lock.js';
+import { AuthKeyDuplicatedError, handleError } from './utils/errors.js';
 import type { CommandOptions } from './types/index.js';
 
 const startClient = async (account_name: string): Promise<TelegramClient> => {
@@ -42,19 +44,38 @@ const startClient = async (account_name: string): Promise<TelegramClient> => {
   });
 
   (client as any).on('error', (err: Error) => {
+    // Check for AUTH_KEY_DUPLICATED error
+    if ((err as any).code === 406 || err.message.includes('AUTH_KEY_DUPLICATED')) {
+      logger.error('AUTH_KEY_DUPLICATED detected', { error: err.message });
+      throw new AuthKeyDuplicatedError();
+    }
     logger.error('Client error', { error: err.message, code: (err as any).code });
   });
 
-  await client.start({
-    phoneNumber: async () => phoneNumber,
-    password: async () => password || '',
-    phoneCode: async () =>
-      await input.text('Please enter the code you received: '),
-    onError: (err: Error) => { logger.error('Authentication error', { error: err.message }); },
-  });
-  logger.info('Successfully connected to Telegram');
-  client.session.save();
-  return client;
+  try {
+    await client.start({
+      phoneNumber: async () => phoneNumber,
+      password: async () => password || '',
+      phoneCode: async () =>
+        await input.text('Please enter the code you received: '),
+      onError: (err: Error) => {
+        // Check for AUTH_KEY_DUPLICATED in authentication
+        if ((err as any).code === 406 || err.message.includes('AUTH_KEY_DUPLICATED')) {
+          throw new AuthKeyDuplicatedError();
+        }
+        logger.error('Authentication error', { error: err.message });
+      },
+    });
+    logger.info('Successfully connected to Telegram');
+    client.session.save();
+    return client;
+  } catch (error) {
+    // Check if it's an AUTH_KEY_DUPLICATED error
+    if ((error as any).code === 406 || (error as Error).message.includes('AUTH_KEY_DUPLICATED')) {
+      throw new AuthKeyDuplicatedError();
+    }
+    throw error;
+  }
 };
 
 // Currently unused but kept for future use
@@ -112,12 +133,45 @@ const uploadSingleFile = async (client: TelegramClient, chatId: string, filePath
 };
 
 const main = async (): Promise<void> => {
+  let processLock: ReturnType<typeof createProcessLock> | null = null;
+
   try {
+    // Ensure we're in a valid directory
+    try {
+      process.cwd();
+    } catch (cwdError: any) {
+      if (cwdError.code === 'ENOENT') {
+        logger.warn('Current working directory no longer exists, changing to home directory');
+        try {
+          process.chdir(require('os').homedir());
+        } catch (chdirError) {
+          logger.error('Failed to change to home directory', { error: (chdirError as Error).message });
+          console.error('Error: Current directory no longer exists and cannot change to home directory.');
+          console.error('Please run the command from a valid directory (e.g., cd ~ && ./uploader-linux ...)');
+          process.exit(1);
+        }
+      } else {
+        throw cwdError;
+      }
+    }
+
     const { account, command, chatId, filePath, deleteSource, name } = options;
-    
+
     // Validate inputs
     validateCommand(command, options);
     validateAccountName(account, Object.keys(config.accounts));
+
+    // Create and acquire process lock
+    const lockDir = join(config.app.sessionDir, '..', 'locks');
+    processLock = createProcessLock(lockDir, account);
+    processLock.setupCleanup();
+
+    if (!processLock.acquire()) {
+      logger.error('Failed to acquire process lock. Another instance may be running.');
+      console.error('\n⚠️  Another instance is already running with this account.');
+      console.error('Please wait for it to finish or stop it before starting a new one.\n');
+      process.exit(1);
+    }
     
     if (chatId) {
       validateChatId(chatId);
@@ -213,8 +267,23 @@ const main = async (): Promise<void> => {
       process.exit(0);
     }
   } catch (error) {
+    // Handle AUTH_KEY_DUPLICATED error specially
+    if (error instanceof AuthKeyDuplicatedError ||
+        (error as any).code === 406 ||
+        (error as Error).message.includes('AUTH_KEY_DUPLICATED')) {
+      const authError = error instanceof AuthKeyDuplicatedError ? error : new AuthKeyDuplicatedError();
+      const message = handleError(authError);
+      console.error('\n❌ ' + message + '\n');
+      process.exit(1);
+    }
+
     logger.error('Fatal error', { error: (error as Error).message, stack: (error as Error).stack });
     process.exit(1);
+  } finally {
+    // Release the lock if it was acquired
+    if (processLock) {
+      processLock.release();
+    }
   }
 };
 

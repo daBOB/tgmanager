@@ -1,13 +1,13 @@
-import logger from '../logger.js';
+const logger = require('../logger');
 
-let sharpInstance: any = null;
+let sharpInstance = null;
 let sharpLoadAttempted = false;
 let sharpAvailable = false;
 
 /**
  * Attempts to load sharp with multiple fallback strategies
  */
-async function loadSharp(): Promise<any> {
+async function loadSharp() {
   if (sharpLoadAttempted) {
     return sharpAvailable ? sharpInstance : null;
   }
@@ -18,7 +18,7 @@ async function loadSharp(): Promise<any> {
   try {
     const sharpModule = await import('sharp');
     // Handle different module export patterns
-    let sharp: any = sharpModule.default || sharpModule;
+    let sharp = sharpModule.default || sharpModule;
 
     // If it's still not a function, try accessing the sharp property
     if (typeof sharp !== 'function' && sharp && sharp.sharp && typeof sharp.sharp === 'function') {
@@ -38,13 +38,13 @@ async function loadSharp(): Promise<any> {
     sharpAvailable = true;
     logger.debug('Sharp loaded successfully via dynamic import');
     return sharpInstance;
-  } catch (error: any) {
+  } catch (error) {
     logger.debug('Failed to load sharp via dynamic import', { error: error.message });
   }
 
   // Strategy 2: Try require (fallback for CommonJS environments)
   try {
-    let sharp: any = require('sharp');
+    let sharp = require('sharp');
 
     // Handle different module export patterns
     if (typeof sharp !== 'function' && sharp && sharp.default && typeof sharp.default === 'function') {
@@ -69,7 +69,7 @@ async function loadSharp(): Promise<any> {
     sharpAvailable = true;
     logger.debug('Sharp loaded successfully via require');
     return sharpInstance;
-  } catch (error: any) {
+  } catch (error) {
     logger.debug('Failed to load sharp via require', { error: error.message });
   }
 
@@ -83,7 +83,7 @@ async function loadSharp(): Promise<any> {
 
   for (const path of possiblePaths) {
     try {
-      let sharp: any = require(path);
+      let sharp = require(path);
 
       // Handle different module export patterns
       if (typeof sharp !== 'function' && sharp && sharp.default && typeof sharp.default === 'function') {
@@ -109,7 +109,7 @@ async function loadSharp(): Promise<any> {
       sharpAvailable = true;
       logger.debug('Sharp loaded successfully from path', { path });
       return sharpInstance;
-    } catch (error: any) {
+    } catch (error) {
       logger.debug('Failed to load sharp from path', { path, error: error.message });
     }
   }
@@ -122,22 +122,29 @@ async function loadSharp(): Promise<any> {
 /**
  * Gets the sharp instance, loading it if necessary
  */
-export async function getSharp(): Promise<any> {
+async function getSharp() {
   return await loadSharp();
 }
 
 /**
  * Checks if sharp is available
  */
-export function isSharpAvailable(): boolean {
+function isSharpAvailable() {
   return sharpAvailable;
 }
 
 /**
  * Resets the sharp loading state (useful for testing)
  */
-export function resetSharpLoader(): void {
+function resetSharpLoader() {
   sharpInstance = null;
   sharpLoadAttempted = false;
   sharpAvailable = false;
 }
+
+module.exports = {
+  getSharp,
+  isSharpAvailable,
+  resetSharpLoader
+};
+

@@ -24,9 +24,16 @@ This is a common issue when using `pkg` to create standalone binaries with nativ
   - Dynamic import (primary method)
   - CommonJS require (fallback)
   - Multiple path attempts (for different environments)
+- Handles different module export patterns (default, named exports, nested properties)
+- Validates that the loaded module is actually a function before using it
 - Graceful degradation when sharp isn't available
 
-### 3. Improved Error Handling
+### 3. Fixed "sharp is not a function" Error
+- Added proper handling for different module export structures in bundled environments
+- Checks for `sharpModule.default`, `sharpModule.sharp`, and other common patterns
+- Validates the loaded module is callable before attempting to use it
+
+### 4. Improved Error Handling
 - Modified `src/Uploader.ts` to handle sharp loading failures gracefully
 - Falls back to regular document upload when image processing isn't available
 - Provides clear logging about what's happening
@@ -48,9 +55,17 @@ This is a common issue when using `pkg` to create standalone binaries with nativ
 ## Testing
 The fix has been tested and the binary now:
 1. Starts successfully without sharp errors
-2. Provides helpful logging when sharp isn't available
-3. Falls back to document upload for images when processing fails
-4. Maintains full functionality when sharp loads successfully
+2. Properly loads and validates the sharp module
+3. Handles the "sharp is not a function" error by checking module structure
+4. Provides helpful logging when sharp isn't available or fails to load
+5. Falls back to document upload for images when processing fails
+6. Maintains full functionality when sharp loads successfully
+
+## Common Issues Fixed
+- ✅ "Cannot find package 'sharp'" - Fixed by bundling sharp instead of treating as external
+- ✅ "sharp is not a function" - Fixed by proper module export handling and validation
+- ✅ Binary crashes on image processing - Fixed with graceful fallbacks
+- ✅ No feedback when sharp fails - Fixed with detailed logging
 
 ## Usage
 Use the rebuilt binaries as before:

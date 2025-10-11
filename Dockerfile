@@ -1,4 +1,4 @@
-FROM node:18-slim AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /usr/src/app
 
@@ -21,16 +21,20 @@ RUN npm install --build-from-source && \
 
 # Copy source files
 COPY src ./src
+COPY scripts ./scripts
 COPY .env.example ./
 
 # Build TypeScript
 RUN npm run build:ts
 
-# Create dist directory if needed
-RUN mkdir -p dist
+# Create dist directories if needed
+RUN mkdir -p dist dist-pkg
+
+# Bundle for pkg (converts ES modules to CommonJS)
+RUN npm run bundle-pkg
 
 # Build for the same architecture as the base image
-RUN pkg dist/index.js \
+RUN pkg dist-pkg/bundled.cjs \
     --compress GZip \
     --public-packages "*" \
     --public \
