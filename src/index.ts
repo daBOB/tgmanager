@@ -1,7 +1,9 @@
 import { Api, TelegramClient } from 'telegram';
 import input from 'input';
-import { existsSync, mkdirSync, readdirSync, statSync, rmSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, statSync, rmSync, unlinkSync } from 'fs';
+import { readdir } from 'fs/promises';
 import { Command } from 'commander';
+import pLimit from 'p-limit';
 import { Uploader } from './Uploader.js';
 import { join, basename } from 'path';
 import config from './config.js';
@@ -116,10 +118,13 @@ program.parse(process.argv);
 
 const options = program.opts<CommandOptions>();
 
-const uploadSingleFile = async (client: TelegramClient, chatId: string, filePath: string, deleteSource?: boolean): Promise<boolean> => {
-  const uploader = new Uploader(client);
+/**
+ * Upload a single file using provided Uploader instance.
+ * Reusing Uploader instance allows caching of premium status across batch uploads.
+ */
+const uploadSingleFile = async (uploader: Uploader, chatId: string, filePath: string, deleteSource?: boolean): Promise<boolean> => {
   const success = await uploader.uploadFile(chatId, filePath);
-  
+
   if (success && deleteSource) {
     try {
       unlinkSync(filePath);
@@ -203,31 +208,40 @@ const main = async (): Promise<void> => {
 
       const stats = statSync(uploadPath);
       
-      if (stats.isDirectory()) {
-        // Handle directory
-        const files = readdirSync(uploadPath)
-          .filter(file => !file.startsWith('.')) // Skip hidden files
-          .map(file => join(uploadPath, file));
-        
-        logger.info(`Found ${files.length} files in directory ${uploadPath}`);
-        
-        let successCount = 0;
-        let failCount = 0;
+      // Create single Uploader instance for the entire batch (enables premium status caching)
+      const uploader = new Uploader(client);
 
-        for (const file of files) {
-          logger.info(`Starting upload: ${basename(file)}`);
-          const success = await uploadSingleFile(client, chatId, file, deleteSource);
-          if (success) {
-            successCount++;
-          } else {
-            failCount++;
-          }
-        }
+      if (stats.isDirectory()) {
+        // Handle directory with concurrent uploads
+        const allFiles = await readdir(uploadPath);
+        const files = allFiles
+          .filter((file: string) => !file.startsWith('.')) // Skip hidden files
+          .map((file: string) => join(uploadPath, file));
+
+        logger.info(`Found ${files.length} files in directory ${uploadPath}`);
+
+        // Create concurrency limiter using config value
+        const concurrencyLimit = config.app.maxConcurrentUploads;
+        const limit = pLimit(concurrencyLimit);
+        logger.info(`Using concurrent uploads`, { maxConcurrent: concurrencyLimit });
+
+        // Execute uploads concurrently with limit
+        const uploadPromises = files.map((file: string) =>
+          limit(async () => {
+            logger.info(`Starting upload: ${basename(file)}`);
+            return uploadSingleFile(uploader, chatId, file, deleteSource);
+          })
+        );
+
+        const results = await Promise.all(uploadPromises);
+        const successCount = results.filter(Boolean).length;
+        const failCount = results.filter((r) => !r).length;
 
         logger.info(`Upload batch complete`, {
           total: files.length,
           successful: successCount,
-          failed: failCount
+          failed: failCount,
+          concurrency: concurrencyLimit
         });
 
         // Delete the source directory if requested and all files were uploaded successfully
@@ -243,7 +257,7 @@ const main = async (): Promise<void> => {
         }
       } else {
         // Handle single file
-        const success = await uploadSingleFile(client, chatId, uploadPath, deleteSource);
+        const success = await uploadSingleFile(uploader, chatId, uploadPath, deleteSource);
         if (!success) {
           logger.error('Failed to upload file');
           process.exit(1);

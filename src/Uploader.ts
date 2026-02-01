@@ -1,6 +1,7 @@
 import { stat, unlink } from 'fs/promises';
 import { basename, extname } from 'path';
-import ffmpeg from 'fluent-ffmpeg';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { Api } from 'telegram';
 import cliProgress from 'cli-progress';
 import { getSharp } from './utils/sharp-loader.js';
@@ -8,8 +9,12 @@ import logger, { logUpload } from './logger.js';
 import config from './config.js';
 import type { TelegramClient, VideoInfo, UploadOptions } from './types/index.js';
 
+const execAsync = promisify(exec);
+
 export class Uploader {
   private client: TelegramClient;
+  /** Cached premium status to avoid repeated API calls */
+  private cachedPremiumStatus: boolean | null = null;
 
   constructor(client: TelegramClient) {
     this.client = client;
@@ -18,7 +23,17 @@ export class Uploader {
     });
   }
 
+  /**
+   * Check if user has Telegram Premium status.
+   * Result is cached for the lifetime of this Uploader instance to avoid repeated API calls.
+   */
   async checkPremiumStatus(): Promise<boolean> {
+    // Return cached value if available
+    if (this.cachedPremiumStatus !== null) {
+      logger.debug('checkPremiumStatus: Using cached value', { isPremium: this.cachedPremiumStatus });
+      return this.cachedPremiumStatus;
+    }
+
     try {
       const result = await this.client.invoke(
         new Api.users.GetFullUser({
@@ -27,57 +42,65 @@ export class Uploader {
       );
       if (!result || !result.users || result.users.length === 0) {
         logger.warn('checkPremiumStatus: Invalid result from API');
+        this.cachedPremiumStatus = false;
         return false;
       }
       const user = result.users[0] as Api.User;
-      if (!user.premium) {
+      const isPremium = !!user.premium;
+      this.cachedPremiumStatus = isPremium;
+
+      if (!isPremium) {
         logger.debug('checkPremiumStatus: User does not have premium');
-        return false;
+      } else {
+        logger.debug('checkPremiumStatus: User has premium status');
       }
-      return true;
+      return isPremium;
     } catch (error) {
       logger.error('Failed to check premium status', { error: (error as Error).message });
+      this.cachedPremiumStatus = false;
       return false;
     }
   }
 
+  /**
+   * Extract video metadata using FFprobe.
+   * Uses async exec to avoid blocking the event loop.
+   */
   async getVideoInfo(filePath: string): Promise<VideoInfo> {
-    return new Promise((resolve) => {
-      ffmpeg.ffprobe(filePath, (err, metadata) => {
-        if (err) {
-          logger.warn('FFprobe error, using defaults', { error: err.message, file: basename(filePath) });
-          // Return default values if FFprobe fails
-          resolve({
-            width: config.fileProcessing.video.defaultWidth,
-            height: config.fileProcessing.video.defaultHeight,
-            duration: config.fileProcessing.video.defaultDuration
-          });
-        } else {
-          try {
-            const videoStream = metadata.streams.find(
-              (stream) => stream.codec_type === 'video'
-            );
-            if (!videoStream) {
-              throw new Error('No video stream found');
-            }
-            const { width = 1920, height = 1080, duration = '0' } = videoStream;
-            resolve({ 
-              width, 
-              height, 
-              duration: parseFloat(duration) 
-            });
-          } catch (error) {
-            logger.warn('Error parsing video metadata, using defaults', { error: (error as Error).message });
-            // Return default values if parsing fails
-            resolve({
-              width: config.fileProcessing.video.defaultWidth,
-              height: config.fileProcessing.video.defaultHeight,
-              duration: config.fileProcessing.video.defaultDuration
-            });
-          }
-        }
+    const defaults: VideoInfo = {
+      width: config.fileProcessing.video.defaultWidth,
+      height: config.fileProcessing.video.defaultHeight,
+      duration: config.fileProcessing.video.defaultDuration
+    };
+
+    try {
+      // Use ffprobe with JSON output for easier parsing
+      const { stdout } = await execAsync(
+        `ffprobe -v quiet -print_format json -show_streams "${filePath}"`
+      );
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const data: { streams?: Array<{ codec_type?: string; width?: number; height?: number; duration?: string }> } = JSON.parse(stdout);
+      const videoStream = data.streams?.find((stream) => stream.codec_type === 'video');
+
+      if (!videoStream) {
+        logger.warn('No video stream found, using defaults', { file: basename(filePath) });
+        return defaults;
+      }
+
+      const width = videoStream.width ?? defaults.width;
+      const height = videoStream.height ?? defaults.height;
+      const duration = parseFloat(videoStream.duration ?? '0') || defaults.duration;
+
+      logger.debug('Video metadata extracted', { width, height, duration, file: basename(filePath) });
+      return { width, height, duration };
+    } catch (error) {
+      logger.warn('FFprobe error, using defaults', {
+        error: (error as Error).message,
+        file: basename(filePath)
       });
-    });
+      return defaults;
+    }
   }
 
   async uploadMP4File(chatId: string, filePath: string): Promise<boolean> {
