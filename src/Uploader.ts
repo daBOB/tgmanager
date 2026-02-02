@@ -1,6 +1,6 @@
 import { stat, unlink } from 'fs/promises';
 import { basename, extname } from 'path';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { Api } from 'telegram';
 import cliProgress from 'cli-progress';
@@ -9,7 +9,7 @@ import logger, { logUpload } from './logger.js';
 import config from './config.js';
 import type { TelegramClient, VideoInfo, UploadOptions } from './types/index.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export class Uploader {
   private client: TelegramClient;
@@ -64,7 +64,7 @@ export class Uploader {
 
   /**
    * Extract video metadata using FFprobe.
-   * Uses async exec to avoid blocking the event loop.
+   * Uses async execFile to avoid blocking the event loop and prevent command injection.
    */
   async getVideoInfo(filePath: string): Promise<VideoInfo> {
     const defaults: VideoInfo = {
@@ -74,9 +74,12 @@ export class Uploader {
     };
 
     try {
-      // Use ffprobe with JSON output for easier parsing
-      const { stdout } = await execAsync(
-        `ffprobe -v quiet -print_format json -show_streams "${filePath}"`
+      // Use execFile with array arguments to prevent command injection
+      // Add 30 second timeout to prevent hanging
+      const { stdout } = await execFileAsync(
+        'ffprobe',
+        ['-v', 'quiet', '-print_format', 'json', '-show_streams', filePath],
+        { timeout: 30000 }
       );
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -142,8 +145,15 @@ export class Uploader {
           return true;
         } catch (error: any) {
           if (error.code === 420) { // FloodWaitError
-            const waitSeconds = error.seconds as number;
-            const waitWithBuffer = Math.ceil(waitSeconds * config.telegram.floodWaitMultiplier);
+            // Check max retry limit
+            if (retryCount >= 10) {
+              logger.error('Max flood wait retries exceeded', { retryCount });
+              throw new Error('Max flood wait retries exceeded');
+            }
+
+            // Add fallback for undefined seconds and ensure minimum 1 second wait
+            const waitSeconds = error.seconds ?? 60;
+            const waitWithBuffer = Math.max(1, Math.ceil(waitSeconds * config.telegram.floodWaitMultiplier));
             logger.warn(`Flood wait error. Waiting ${waitWithBuffer} seconds before retry`, {
               originalWait: waitSeconds,
               actualWait: waitWithBuffer,
@@ -204,8 +214,15 @@ export class Uploader {
           return true;
         } catch (error: any) {
           if (error.code === 420) { // FloodWaitError
-            const waitSeconds = error.seconds as number;
-            const waitWithBuffer = Math.ceil(waitSeconds * config.telegram.floodWaitMultiplier);
+            // Check max retry limit
+            if (retryCount >= 10) {
+              logger.error('Max flood wait retries exceeded', { retryCount });
+              throw new Error('Max flood wait retries exceeded');
+            }
+
+            // Add fallback for undefined seconds and ensure minimum 1 second wait
+            const waitSeconds = error.seconds ?? 60;
+            const waitWithBuffer = Math.max(1, Math.ceil(waitSeconds * config.telegram.floodWaitMultiplier));
             logger.warn(`Flood wait error. Waiting ${waitWithBuffer} seconds before retry`, {
               originalWait: waitSeconds,
               actualWait: waitWithBuffer,
@@ -285,8 +302,18 @@ export class Uploader {
         // Check image dimensions
         const metadata = await sharp(filePath).metadata();
         const { width = 0, height = 0 } = metadata;
-        
+
         logger.debug(`Image dimensions`, { width, height, file: basename(filePath) });
+
+        // Validate dimensions before processing to prevent division by zero
+        if (width <= 0 || height <= 0) {
+          logger.warn('Invalid image dimensions, falling back to document upload', {
+            width,
+            height,
+            file: basename(filePath)
+          });
+          return await this.uploadDocument(chatId, filePath);
+        }
 
         // Telegram has limits on image dimensions
         const MAX_DIMENSION = config.fileProcessing.image.maxDimension;

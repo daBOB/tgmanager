@@ -275,6 +275,12 @@ const main = async (): Promise<void> => {
           megagroup: false,
         })
       );
+
+      // Validate channel creation result
+      if (!result || !(result as any).chats || (result as any).chats.length === 0) {
+        throw new Error('Failed to create channel: no channel data returned');
+      }
+
       const channel = (result as any).chats[0] as Api.Channel;
       const channelId = `-100${channel.id.toJSNumber()}`;
       logger.info('Channel created successfully', { channelId, name: sanitizedName });

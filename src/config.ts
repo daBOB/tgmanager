@@ -33,8 +33,14 @@ const getAccountConfig = (accountName: string): AccountConfig => {
     throw new Error(`Missing configuration for account: ${accountName}. Please check your .env file.`);
   }
 
+  // Validate apiId is a valid number
+  const apiIdNum = parseInt(apiId, 10);
+  if (isNaN(apiIdNum)) {
+    throw new Error(`Invalid API ID for account ${accountName}: must be a number`);
+  }
+
   return {
-    apiId: parseInt(apiId, 10),
+    apiId: apiIdNum,
     apiHash,
     phoneNumber,
     password: password || undefined
@@ -70,7 +76,7 @@ const config: Config = {
   // Application settings
   app: {
     logLevel: process.env.LOG_LEVEL || 'info',
-    maxConcurrentUploads: parseInt(process.env.MAX_CONCURRENT_UPLOADS || '1', 10),
+    maxConcurrentUploads: Math.max(1, parseInt(process.env.MAX_CONCURRENT_UPLOADS || '1', 10)),
     uploadTimeout: parseInt(process.env.UPLOAD_TIMEOUT || '600000', 10),
     sessionDir: expandPath(process.env.SESSION_DIR || 'sessions'),
     uploadDir: expandPath(process.env.UPLOAD_DIR || 'uploads'),
