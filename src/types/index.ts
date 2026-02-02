@@ -73,6 +73,10 @@ export interface CommandOptions {
   filePath?: string;
   deleteSource?: boolean;
   name?: string;
+  virtualPath?: string;
+  outputPath?: string;
+  storageChannel?: string;
+  force?: boolean;
 }
 
 export interface UploadResult {

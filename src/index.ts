@@ -112,7 +112,11 @@ program
   .option('-i, --chat-id <id>', 'Chat ID')
   .option('-f, --file-path <path>', 'File path')
   .option('-n, --name <name>', 'Name')
-  .option('--delete-source', 'Delete the source file after the operation');
+  .option('--delete-source', 'Delete the source file after the operation')
+  .option('--virtual-path <path>', 'Virtual path for storage operations')
+  .option('--output-path <path>', 'Output path for download operations')
+  .option('--storage-channel <id>', 'Storage channel ID (optional)')
+  .option('--force', 'Force overwrite existing files');
 
 program.parse(process.argv);
 
@@ -285,6 +289,33 @@ const main = async (): Promise<void> => {
       const channelId = `-100${channel.id.toJSNumber()}`;
       logger.info('Channel created successfully', { channelId, name: sanitizedName });
       process.exit(0);
+    } else if (command === 'upload-storage' && filePath && options.virtualPath) {
+      const { uploadStorageCommand } = await import('./commands/upload-storage-command.js');
+      const success = await uploadStorageCommand(client, {
+        filePath: uploadPath!,
+        virtualPath: options.virtualPath,
+        storageChannelId: options.storageChannel,
+        deleteSource
+      });
+      process.exit(success ? 0 : 1);
+
+    } else if (command === 'download-storage' && options.virtualPath) {
+      const { downloadStorageCommand } = await import('./commands/download-storage-command.js');
+      const success = await downloadStorageCommand(client, {
+        virtualPath: options.virtualPath,
+        outputPath: options.outputPath,
+        storageChannelId: options.storageChannel,
+        force: options.force
+      });
+      process.exit(success ? 0 : 1);
+
+    } else if (command === 'list-storage') {
+      const { listStorageCommand } = await import('./commands/list-storage-command.js');
+      const success = await listStorageCommand(client, {
+        pathPrefix: options.virtualPath,
+        storageChannelId: options.storageChannel
+      });
+      process.exit(success ? 0 : 1);
     }
   } catch (error) {
     // Handle AUTH_KEY_DUPLICATED error specially

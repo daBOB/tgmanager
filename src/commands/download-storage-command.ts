@@ -1,0 +1,175 @@
+// src/commands/download-storage-command.ts
+import { existsSync } from 'fs';
+import { mkdir } from 'fs/promises';
+import { join, dirname } from 'path';
+import cliProgress from 'cli-progress';
+import type { TelegramClient } from '../types/index.js';
+import { StorageService } from '../storage/storage-service.js';
+import { mergeChunks, cleanupChunks } from '../storage/file-splitter.js';
+import logger from '../logger.js';
+import config from '../config.js';
+
+export interface DownloadStorageOptions {
+  virtualPath: string;
+  outputPath?: string;
+  storageChannelId?: string;
+  force?: boolean;
+}
+
+/**
+ * Download file from storage channel by virtual path
+ */
+export async function downloadStorageCommand(
+  client: TelegramClient,
+  options: DownloadStorageOptions
+): Promise<boolean> {
+  const { virtualPath, outputPath, storageChannelId, force } = options;
+
+  console.log(`\nSearching for: ${virtualPath}\n`);
+
+  // Initialize storage service
+  const storage = new StorageService(client, { storageChannelId });
+  await storage.initializeStorageChannel();
+
+  // Find file by virtual path
+  const fileInfo = await storage.findByPath(virtualPath);
+
+  if (!fileInfo) {
+    console.error(`Error: File not found: ${virtualPath}`);
+    logger.error('File not found in storage', { virtualPath });
+    return false;
+  }
+
+  console.log(`Found: ${fileInfo.originalName}`);
+  console.log(`Size: ${formatBytes(fileInfo.size)}`);
+  console.log(`Status: ${fileInfo.status}\n`);
+
+  if (fileInfo.status !== 'complete') {
+    console.error('Error: File upload incomplete or failed');
+    return false;
+  }
+
+  // Get full manifest
+  const manifest = await storage.getManifestFromMessage(fileInfo.manifestMessageId);
+  if (!manifest) {
+    console.error('Error: Could not retrieve file manifest');
+    return false;
+  }
+
+  // Determine output path
+  const finalOutputPath = outputPath || join(process.cwd(), manifest.originalName);
+  const outputDir = dirname(finalOutputPath);
+
+  // Check if output already exists
+  if (existsSync(finalOutputPath) && !force) {
+    console.error(`Error: Output file already exists: ${finalOutputPath}`);
+    console.error('Use --force to overwrite or specify different --output-path');
+    return false;
+  }
+
+  // Create output directory if needed
+  if (!existsSync(outputDir)) {
+    await mkdir(outputDir, { recursive: true });
+  }
+
+  // Create temp directory for chunks
+  const tempDir = join(config.app.uploadDir, '.storage-temp', manifest.fileId);
+  if (!existsSync(tempDir)) {
+    await mkdir(tempDir, { recursive: true });
+  }
+
+  console.log(`Downloading ${manifest.totalChunks} chunk(s)...\n`);
+
+  // Progress bar for downloading
+  const downloadBar = new cliProgress.SingleBar({
+    format: 'Downloading |{bar}| {percentage}% | Chunk {chunkIndex}/{totalChunks}',
+  }, cliProgress.Presets.shades_classic);
+
+  downloadBar.start(100, 0, { chunkIndex: 0, totalChunks: manifest.totalChunks });
+
+  try {
+    // Download all chunks
+    for (let i = 0; i < manifest.chunks.length; i++) {
+      const chunk = manifest.chunks[i];
+      if (!chunk) {
+        throw new Error(`Chunk ${i} not found in manifest`);
+      }
+      if (!chunk.messageId) {
+        throw new Error(`Missing message ID for chunk ${i}`);
+      }
+
+      const chunkPath = join(tempDir, chunk.filename);
+      const chunkHash = chunk.hash;
+      const chunkMessageId = chunk.messageId;
+      const success = await storage.downloadChunk(
+        chunkMessageId,
+        chunkPath,
+        chunkHash,
+        (p) => {
+          const overallProgress = ((i + p / 100) / manifest.totalChunks) * 100;
+          downloadBar.update(overallProgress, {
+            chunkIndex: i + 1,
+            totalChunks: manifest.totalChunks
+          });
+        }
+      );
+
+      if (!success) {
+        throw new Error(`Failed to download chunk ${i}`);
+      }
+    }
+
+    downloadBar.stop();
+    console.log('\nMerging chunks...');
+
+    // Merge chunks
+    const mergeBar = new cliProgress.SingleBar({
+      format: 'Merging |{bar}| {percentage}%',
+    }, cliProgress.Presets.shades_classic);
+
+    mergeBar.start(100, 0);
+
+    const mergeSuccess = await mergeChunks(manifest, tempDir, finalOutputPath, (progress) => {
+      mergeBar.update(progress.percentage);
+    });
+
+    mergeBar.stop();
+
+    if (!mergeSuccess) {
+      console.error('\n✗ File integrity verification failed');
+      return false;
+    }
+
+    // Cleanup temp chunks
+    await cleanupChunks(manifest, tempDir);
+
+    console.log(`\n✓ Download complete: ${finalOutputPath}`);
+    logger.info('Storage download complete', {
+      fileId: manifest.fileId,
+      outputPath: finalOutputPath
+    });
+
+    return true;
+  } catch (error) {
+    downloadBar.stop();
+    logger.error('Storage download failed', {
+      virtualPath,
+      error: (error as Error).message
+    });
+    console.error(`\n✗ Download failed: ${(error as Error).message}`);
+    return false;
+  }
+}
+
+/**
+ * Format bytes to human readable string
+ */
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (bytes >= 1024 && i < units.length - 1) {
+    bytes /= 1024;
+    i++;
+  }
+  return `${bytes.toFixed(2)} ${units[i]}`;
+}
