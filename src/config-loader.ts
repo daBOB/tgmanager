@@ -3,7 +3,6 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
 import logger from './logger.js';
 
 // Determine if running as compiled executable
@@ -37,8 +36,8 @@ export const loadConfig = (): void => {
   const possibleEnvPaths = [
     // 1. Command-line specified path
     process.env.TGMANAGER_CONFIG,
-    // 2. Current working directory
-    join(process.cwd(), '.env'),
+    // 2. Current working directory (may fail if CWD doesn't exist)
+    (() => { try { return join(process.cwd(), '.env'); } catch { return ''; } })(),
     // 3. Next to the executable/project root
     join(baseDir, '.env'),
     // 4. User's home config directory

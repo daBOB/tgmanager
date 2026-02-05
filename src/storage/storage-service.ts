@@ -242,20 +242,41 @@ export class StorageService {
    */
   async uploadManifest(manifest: FileManifest): Promise<number> {
     const channelId = this.getStorageChannelId();
-
     const manifestJson = JSON.stringify(manifest, null, 2);
-    const caption = `#manifest fileId:${manifest.fileId} path:${manifest.originalPath} name:${manifest.originalName}`;
+    const caption = `#manifest fileId:${manifest.fileId} path:${this.sanitizeCaption(manifest.originalPath)} name:${this.sanitizeCaption(manifest.originalName)}`;
 
-    const message = await this.client.sendMessage(channelId, {
-      message: `${caption}\n\n\`\`\`json\n${manifestJson}\n\`\`\``,
+    // Telegram message limit is 4096 chars
+    const fullMessage = `${caption}\n\n\`\`\`json\n${manifestJson}\n\`\`\``;
+
+    if (fullMessage.length <= 4096) {
+      const message = await this.client.sendMessage(channelId, { message: fullMessage });
+      logger.info('Manifest uploaded as message', { fileId: manifest.fileId, messageId: message.id });
+      return message.id;
+    }
+
+    // Large manifest: upload as JSON file
+    const { writeFile: writeFileAsync } = await import('fs/promises');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const tempPath = join(tmpdir(), `${manifest.fileId}.manifest.json`);
+    await writeFileAsync(tempPath, manifestJson, 'utf-8');
+
+    const message = await this.client.sendFile(channelId, {
+      file: tempPath,
+      caption,
     });
 
-    logger.info('Manifest uploaded', {
+    // Clean up temp file
+    const { unlink } = await import('fs/promises');
+    await unlink(tempPath).catch(() => {});
+
+    logger.info('Manifest uploaded as file (exceeded message limit)', {
       fileId: manifest.fileId,
-      messageId: message.id
+      messageId: (message as any).id,
+      size: manifestJson.length
     });
 
-    return message.id;
+    return (message as any).id;
   }
 
   /**
@@ -314,7 +335,7 @@ export class StorageService {
   }
 
   /**
-   * Get manifest from message by parsing JSON from code block
+   * Get manifest from message by parsing JSON from code block or file attachment
    */
   async getManifestFromMessage(messageId: number): Promise<FileManifest | null> {
     const channelId = this.getStorageChannelId();
@@ -322,23 +343,38 @@ export class StorageService {
     const messages = await this.client.getMessages(channelId, { ids: [messageId] });
     const message = messages[0];
 
-    if (!message || !message.message) {
+    if (!message) {
       return null;
     }
 
-    // Extract JSON from code block
-    const jsonMatch = message.message.match(/```json\n([\s\S]*?)\n```/);
-    if (!jsonMatch) {
-      return null;
+    // Try extracting JSON from code block first
+    if (message.message) {
+      const jsonMatch = message.message.match(/```json\n([\s\S]*?)\n```/);
+      if (jsonMatch) {
+        try {
+          const jsonContent = jsonMatch[1];
+          if (jsonContent) {
+            return JSON.parse(jsonContent) as FileManifest;
+          }
+        } catch {
+          // Fall through to file attachment fallback
+        }
+      }
     }
 
-    try {
-      const jsonContent = jsonMatch[1];
-      if (!jsonContent) return null;
-      return JSON.parse(jsonContent) as FileManifest;
-    } catch {
-      return null;
+    // Try downloading as file attachment
+    if (message.media) {
+      try {
+        const buffer = await this.client.downloadMedia(message);
+        if (buffer) {
+          return JSON.parse((buffer as Buffer).toString('utf-8')) as FileManifest;
+        }
+      } catch {
+        // Fall through
+      }
     }
+
+    return null;
   }
 
   /**
@@ -436,21 +472,48 @@ export class StorageService {
   }
 
   /**
-   * Parse manifest from message text
+   * Parse manifest from message text or file attachment
    */
   private async parseManifestFromMessage(message: Api.Message): Promise<FileManifest | null> {
-    if (!message.message) return null;
-
-    const jsonMatch = message.message.match(/```json\n([\s\S]*?)\n```/);
-    if (!jsonMatch) return null;
-
-    try {
-      const jsonContent = jsonMatch[1];
-      if (!jsonContent) return null;
-      return JSON.parse(jsonContent) as FileManifest;
-    } catch {
-      return null;
+    // Try extracting JSON from code block first
+    if (message.message) {
+      const jsonMatch = message.message.match(/```json\n([\s\S]*?)\n```/);
+      if (jsonMatch) {
+        try {
+          const jsonContent = jsonMatch[1];
+          if (jsonContent) {
+            return JSON.parse(jsonContent) as FileManifest;
+          }
+        } catch {
+          // Fall through to file attachment fallback
+        }
+      }
     }
+
+    // Try downloading as file attachment
+    if (message.media) {
+      try {
+        const buffer = await this.client.downloadMedia(message);
+        if (buffer) {
+          return JSON.parse((buffer as Buffer).toString('utf-8')) as FileManifest;
+        }
+      } catch {
+        // Fall through
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Sanitize text for use in captions (remove newlines, backticks, hashtags)
+   */
+  private sanitizeCaption(text: string): string {
+    return text
+      .replace(/[\n\r]/g, ' ')
+      .replace(/`/g, "'")
+      .replace(/#/g, '')
+      .slice(0, 200);
   }
 
   /**

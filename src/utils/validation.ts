@@ -33,10 +33,10 @@ export function validateChatId(chatId: string): string {
   }
 
   if (chatId.startsWith('@')) {
-    // Username validation: alphanumeric and underscores, 5-32 chars
-    const usernameRegex = /^@[a-zA-Z0-9_]{4,31}$/;
+    // Username validation: alphanumeric and underscores, 1-31 chars after @, must start with letter
+    const usernameRegex = /^@[a-zA-Z][a-zA-Z0-9_]{0,30}$/;
     if (!usernameRegex.test(chatId)) {
-      throw new Error('Invalid username format. Must be 5-32 characters, alphanumeric and underscores only.');
+      throw new Error('Invalid username format. Must be 1-31 characters, start with letter, alphanumeric and underscores only.');
     }
     return chatId;
   }
@@ -56,6 +56,11 @@ export function validateChatId(chatId: string): string {
 export function validateAccountName(accountName: string, availableAccounts: string[]): string {
   if (!accountName) {
     throw new Error('Account name is required');
+  }
+
+  // Prevent path traversal attacks
+  if (accountName.includes('/') || accountName.includes('\\') || accountName.includes('..') || accountName.includes('\0')) {
+    throw new Error('Invalid account name: contains illegal characters');
   }
 
   if (!availableAccounts.includes(accountName)) {
@@ -87,8 +92,8 @@ export function validateFileExists(filePath: string): Stats {
  * Validates command arguments
  */
 export function validateCommand(command: string | undefined, options: CommandOptions): CommandOptions {
-  const validCommands = ['upload', 'create'];
-  
+  const validCommands = ['upload', 'create', 'upload-storage', 'download-storage', 'list-storage'];
+
   if (!command || !validCommands.includes(command)) {
     throw new Error(`Invalid command: ${command}. Valid commands: ${validCommands.join(', ')}`);
   }
@@ -111,6 +116,23 @@ export function validateCommand(command: string | undefined, options: CommandOpt
       throw new Error('Channel name must be between 1 and 255 characters');
     }
   }
+
+  if (command === 'upload-storage') {
+    if (!options.filePath) {
+      throw new Error('File path is required for upload-storage command');
+    }
+    if (!options.virtualPath) {
+      throw new Error('Virtual path is required for upload-storage command');
+    }
+  }
+
+  if (command === 'download-storage') {
+    if (!options.virtualPath) {
+      throw new Error('Virtual path is required for download-storage command');
+    }
+  }
+
+  // list-storage requires no additional validation
 
   return options;
 }

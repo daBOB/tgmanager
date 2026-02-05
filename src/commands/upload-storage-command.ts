@@ -91,9 +91,11 @@ async function uploadWithSplitting(
 
   splitBar.start(100, 0, { currentChunk: 0, totalChunks: '?' });
 
+  let manifest: any = null;
+
   try {
     // Split file
-    const { manifest } = await splitFile(filePath, {
+    const result = await splitFile(filePath, {
       outputDir: tempDir,
       virtualPath,
       onProgress: (progress) => {
@@ -103,6 +105,7 @@ async function uploadWithSplitting(
         });
       }
     });
+    manifest = result.manifest;
 
     splitBar.stop();
     console.log(`\nCreated ${manifest.totalChunks} chunks\n`);
@@ -148,6 +151,19 @@ async function uploadWithSplitting(
     return true;
   } catch (error) {
     splitBar.stop();
+
+    // Clean up chunks on failure
+    if (manifest) {
+      try {
+        await cleanupChunks(manifest, tempDir);
+      } catch (cleanupError) {
+        // Ignore cleanup errors, log only
+        logger.warn('Failed to cleanup chunks after upload failure', {
+          error: (cleanupError as Error).message
+        });
+      }
+    }
+
     logger.error('Storage upload failed', {
       filePath,
       error: (error as Error).message

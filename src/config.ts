@@ -76,8 +76,14 @@ const config: Config = {
   // Application settings
   app: {
     logLevel: process.env.LOG_LEVEL || 'info',
-    maxConcurrentUploads: Math.max(1, parseInt(process.env.MAX_CONCURRENT_UPLOADS || '1', 10)),
-    uploadTimeout: parseInt(process.env.UPLOAD_TIMEOUT || '600000', 10),
+    maxConcurrentUploads: (() => {
+      const parsed = parseInt(process.env.MAX_CONCURRENT_UPLOADS || '1', 10);
+      return isNaN(parsed) ? 1 : Math.max(1, parsed);
+    })(),
+    uploadTimeout: (() => {
+      const parsed = parseInt(process.env.UPLOAD_TIMEOUT || '600000', 10);
+      return isNaN(parsed) ? 600000 : parsed;
+    })(),
     sessionDir: expandPath(process.env.SESSION_DIR || 'sessions'),
     uploadDir: expandPath(process.env.UPLOAD_DIR || 'uploads'),
   },

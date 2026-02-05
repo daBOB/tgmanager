@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import logger from '../logger.js';
 
 /**
@@ -8,6 +8,7 @@ import logger from '../logger.js';
 export class ProcessLock {
   private lockFile: string;
   private locked: boolean = false;
+  private cleanupRegistered: boolean = false;
 
   constructor(lockDir: string, accountName: string) {
     // Ensure lock directory exists
@@ -98,6 +99,9 @@ export class ProcessLock {
    * Setup cleanup handlers
    */
   setupCleanup(): void {
+    if (this.cleanupRegistered) return;
+    this.cleanupRegistered = true;
+
     // Cleanup on normal exit
     process.on('exit', () => {
       this.release();

@@ -7,9 +7,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Ensure logs directory exists
-const logsDir = process.pkg 
-  ? join(process.cwd(), 'logs') // For packaged app, use current working directory
-  : join(dirname(__dirname), 'logs'); // For development, use project directory
+let logsDir: string;
+try {
+  logsDir = process.pkg
+    ? join(process.cwd(), 'logs') // For packaged app, use current working directory
+    : join(dirname(__dirname), 'logs'); // For development, use project directory
+} catch {
+  // CWD may not exist (e.g., deleted directory with packaged executable)
+  // Fallback to project directory
+  logsDir = join(dirname(__dirname), 'logs');
+}
 
 // Only create directory if not in pkg snapshot
 if (!process.pkg && !existsSync(logsDir)) {

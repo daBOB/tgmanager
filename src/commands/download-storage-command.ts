@@ -101,21 +101,38 @@ export async function downloadStorageCommand(
       const chunkPath = join(tempDir, chunk.filename);
       const chunkHash = chunk.hash;
       const chunkMessageId = chunk.messageId;
-      const success = await storage.downloadChunk(
-        chunkMessageId,
-        chunkPath,
-        chunkHash,
-        (p) => {
-          const overallProgress = ((i + p / 100) / manifest.totalChunks) * 100;
-          downloadBar.update(overallProgress, {
-            chunkIndex: i + 1,
-            totalChunks: manifest.totalChunks
+
+      // Retry chunk download with exponential backoff
+      let success = false;
+      const maxRetries = 3;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        success = await storage.downloadChunk(
+          chunkMessageId,
+          chunkPath,
+          chunkHash,
+          (p) => {
+            const overallProgress = ((i + p / 100) / manifest.totalChunks) * 100;
+            downloadBar.update(overallProgress, {
+              chunkIndex: i + 1,
+              totalChunks: manifest.totalChunks
+            });
+          }
+        );
+
+        if (success) break;
+
+        if (attempt < maxRetries - 1) {
+          logger.warn('Chunk download failed, retrying', {
+            chunkIndex: i,
+            attempt: attempt + 1,
+            maxRetries
           });
+          await new Promise(r => setTimeout(r, 2000 * (attempt + 1))); // exponential backoff
         }
-      );
+      }
 
       if (!success) {
-        throw new Error(`Failed to download chunk ${i}`);
+        throw new Error(`Failed to download chunk ${i} after ${maxRetries} attempts`);
       }
     }
 

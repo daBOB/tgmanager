@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import pLimit from 'p-limit';
 import { Uploader } from './Uploader.js';
 import { join, basename } from 'path';
+import { homedir } from 'os';
 import config from './config.js';
 import logger from './logger.js';
 import { validatePath, validateChatId, validateAccountName, validateCommand, sanitizeInput } from './utils/validation.js';
@@ -39,17 +40,19 @@ const startClient = async (account_name: string): Promise<TelegramClient> => {
   (client as any).on('disconnect', (err?: Error) => {
     if (err) {
       logger.error('Client disconnected with error', { error: err.message });
+      process.exit(1);
     } else {
       logger.info('Client disconnected');
     }
-    process.exit(1);
   });
 
   (client as any).on('error', (err: Error) => {
     // Check for AUTH_KEY_DUPLICATED error
     if ((err as any).code === 406 || err.message.includes('AUTH_KEY_DUPLICATED')) {
       logger.error('AUTH_KEY_DUPLICATED detected', { error: err.message });
-      throw new AuthKeyDuplicatedError();
+      const message = handleError(new AuthKeyDuplicatedError());
+      console.error('\n❌ ' + message + '\n');
+      process.exit(1);
     }
     logger.error('Client error', { error: err.message, code: (err as any).code });
   });
@@ -152,7 +155,7 @@ const main = async (): Promise<void> => {
       if (cwdError.code === 'ENOENT') {
         logger.warn('Current working directory no longer exists, changing to home directory');
         try {
-          process.chdir(require('os').homedir());
+          process.chdir(homedir());
         } catch (chdirError) {
           logger.error('Failed to change to home directory', { error: (chdirError as Error).message });
           console.error('Error: Current directory no longer exists and cannot change to home directory.');

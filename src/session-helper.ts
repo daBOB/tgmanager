@@ -1,5 +1,5 @@
 import { StringSession, StoreSession } from 'telegram/sessions/index.js';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import type { Session } from 'telegram/sessions/Abstract.js';
 
@@ -29,6 +29,7 @@ export function createSession(sessionDir: string): Session {
     session.save = function() {
       const result = originalSave();
       writeFileSync(sessionFile, result, 'utf-8');
+      try { chmodSync(sessionFile, 0o600); } catch {}
       return result;
     };
     

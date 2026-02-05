@@ -265,6 +265,13 @@ export class Uploader {
 
     try {
       const stats = await stat(filePath);
+
+      // Fix #9: Check for zero-byte files
+      if (stats.size === 0) {
+        logger.warn('Skipping empty file', { fileName: basename(filePath) });
+        return false;
+      }
+
       if (stats.size > MAX_FILE_SIZE_BYTES) {
         const limitGB = MAX_FILE_SIZE_BYTES / (1024*1024*1024);
         const accountType = isPremium ? 'premium' : 'regular';
@@ -339,23 +346,25 @@ export class Uploader {
           newWidth = Math.floor(newWidth);
           newHeight = Math.floor(newHeight);
 
-          logger.info(`Resizing image`, { 
-            original: `${width}x${height}`, 
+          logger.info(`Resizing image`, {
+            original: `${width}x${height}`,
             new: `${newWidth}x${newHeight}`,
             file: basename(filePath)
           });
 
-          // Reduce image size
+          // Fix #7: Wrap resized file upload in try/finally for cleanup
           const resizedFilePath = `${filePath}_resized${extension}`;
           await sharp(filePath)
             .resize(newWidth, newHeight)
             .toFile(resizedFilePath);
 
-          // Upload the resized image
-          const success = await this.uploadDocument(chatId, resizedFilePath);
-
-          // Delete the resized image file
-          await unlink(resizedFilePath);
+          let success = false;
+          try {
+            success = await this.uploadDocument(chatId, resizedFilePath);
+          } finally {
+            // Always clean up resized file
+            await unlink(resizedFilePath).catch(() => {});
+          }
 
           return success;
         }
