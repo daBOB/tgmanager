@@ -29,9 +29,8 @@ export interface FileManifest {
   updatedAt: string;
 }
 
-// ~1.9GB chunk size — stays under the 2GB regular account upload limit.
-// Premium accounts allow 4GB but we use a safe default for all account types.
-export const DEFAULT_CHUNK_SIZE = Math.floor(1.9 * 1024 * 1024 * 1024);
+// ~3.7GB chunk size — stays under the 4GB premium account upload limit.
+export const DEFAULT_CHUNK_SIZE = Math.floor(3.7 * 1024 * 1024 * 1024);
 
 /**
  * Create new manifest for file splitting operation
