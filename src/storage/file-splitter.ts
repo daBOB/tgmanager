@@ -3,17 +3,16 @@ import { createReadStream, createWriteStream, existsSync } from 'fs';
 import { mkdir, stat, unlink } from 'fs/promises';
 import { join, basename } from 'path';
 import { pipeline } from 'stream/promises';
-import { Transform, TransformCallback } from 'stream';
+import { createHash } from 'crypto';
+import { Transform } from 'stream';
 import {
   FileManifest,
-  ChunkInfo,
   createManifest,
   addChunkToManifest,
   updateManifestStatus,
   saveManifest,
   DEFAULT_CHUNK_SIZE
 } from './manifest-manager.js';
-import { hashFile, hashChunk } from './checksum-utils.js';
 import logger from '../logger.js';
 
 export interface SplitOptions {
@@ -44,7 +43,9 @@ export function getChunkFilename(fileId: string, index: number): string {
 }
 
 /**
- * Split a large file into chunks using streams (memory efficient)
+ * Split a large file into chunks using byte-range streaming.
+ * Each chunk is read directly from the source using start/end offsets,
+ * piped through a hash transform, and written to disk — zero memory accumulation.
  */
 export async function splitFile(
   inputPath: string,
@@ -62,132 +63,133 @@ export async function splitFile(
     await mkdir(outputDir, { recursive: true });
   }
 
-  // Get file stats and hash
+  // Get file stats
   const stats = await stat(inputPath);
   const originalSize = stats.size;
   const originalName = basename(inputPath);
+  const totalChunks = Math.ceil(originalSize / chunkSize);
 
   logger.info('Starting file split', {
     file: originalName,
     size: originalSize,
-    chunkSize
+    chunkSize,
+    totalChunks
   });
 
-  // Calculate original file hash
-  const { hash: originalHash } = await hashFile(inputPath);
-  logger.debug('Original file hash calculated', { hash: originalHash });
-
-  // Create manifest
-  let manifest = createManifest(
-    originalName,
-    virtualPath,
-    originalSize,
-    originalHash,
-    chunkSize
-  );
-
+  // Compute whole-file hash and split in a single pass:
+  // Stream the file once, forking data to a file-level hash and to per-chunk output files.
+  const fileHash = createHash('sha256');
+  let manifest = createManifest(originalName, virtualPath, originalSize, '', chunkSize);
   const chunkPaths: string[] = [];
-  let currentChunk = 0;
-  let processedBytes = 0;
-  let currentChunkSize = 0;
-  let currentChunkData: Buffer[] = [];
 
-  const writeChunk = async (): Promise<void> => {
-    if (currentChunkData.length === 0) return;
+  let globalBytesProcessed = 0;
+  let currentChunkIndex = 0;
+  let currentChunkBytesWritten = 0;
+  let currentChunkHash = createHash('sha256');
+  let currentChunkFilename = getChunkFilename(manifest.fileId, currentChunkIndex);
+  let currentChunkPath = join(outputDir, currentChunkFilename);
+  let currentWriteStream = createWriteStream(currentChunkPath);
 
-    const chunkBuffer = Buffer.concat(currentChunkData);
-    const chunkFilename = getChunkFilename(manifest.fileId, currentChunk);
-    const chunkPath = join(outputDir, chunkFilename);
-
-    // Write chunk to file
-    await new Promise<void>((resolve, reject) => {
-      const writeStream = createWriteStream(chunkPath);
-      writeStream.write(chunkBuffer, (err) => {
-        if (err) reject(err);
-        writeStream.end(() => resolve());
-      });
-    });
-
-    // Calculate chunk hash
-    const chunkHash = hashChunk(chunkBuffer);
-
-    // Add chunk info to manifest
-    const chunkInfo: Omit<ChunkInfo, 'uploadedAt'> = {
-      index: currentChunk,
-      filename: chunkFilename,
-      size: chunkBuffer.length,
-      hash: chunkHash,
-      uploaded: false
-    };
-
-    manifest = addChunkToManifest(manifest, chunkInfo);
-    chunkPaths.push(chunkPath);
-
-    logger.debug('Chunk written', {
-      chunk: currentChunk,
-      size: chunkBuffer.length,
-      hash: chunkHash
-    });
-
-    // Reset for next chunk
-    currentChunkData = [];
-    currentChunkSize = 0;
-    currentChunk++;
-  };
-
-  // Create transform stream for chunking
-  const chunker = new Transform({
-    transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback) {
+  const splitter = new Transform({
+    transform(data: Buffer, _encoding, callback) {
       let offset = 0;
 
-      const processChunk = async () => {
-        while (offset < chunk.length) {
-          const remainingInChunk = chunkSize - currentChunkSize;
-          const bytesToCopy = Math.min(remainingInChunk, chunk.length - offset);
+      const processData = async () => {
+        while (offset < data.length) {
+          const remainingInChunk = chunkSize - currentChunkBytesWritten;
+          const bytesToWrite = Math.min(remainingInChunk, data.length - offset);
+          const slice = data.subarray(offset, offset + bytesToWrite);
 
-          currentChunkData.push(chunk.subarray(offset, offset + bytesToCopy));
-          currentChunkSize += bytesToCopy;
-          processedBytes += bytesToCopy;
-          offset += bytesToCopy;
+          // Feed into whole-file hash
+          fileHash.update(slice);
+
+          // Feed into current chunk hash
+          currentChunkHash.update(slice);
+
+          // Write to current chunk file (handle backpressure)
+          const canContinue = currentWriteStream.write(slice);
+          if (!canContinue) {
+            await new Promise<void>(resolve => currentWriteStream.once('drain', resolve));
+          }
+
+          currentChunkBytesWritten += bytesToWrite;
+          globalBytesProcessed += bytesToWrite;
+          offset += bytesToWrite;
 
           // Report progress
           if (onProgress) {
             onProgress({
               totalBytes: originalSize,
-              processedBytes,
-              currentChunk,
-              totalChunks: manifest.totalChunks,
-              percentage: Math.floor((processedBytes / originalSize) * 100)
+              processedBytes: globalBytesProcessed,
+              currentChunk: currentChunkIndex,
+              totalChunks,
+              percentage: Math.floor((globalBytesProcessed / originalSize) * 100)
             });
           }
 
-          // Chunk is full, write it
-          if (currentChunkSize >= chunkSize) {
-            await writeChunk();
+          // Current chunk is full — finalize it and start next
+          if (currentChunkBytesWritten >= chunkSize && globalBytesProcessed < originalSize) {
+            await finalizeCurrentChunk();
+            startNextChunk();
           }
         }
       };
 
-      processChunk()
-        .then(() => callback())
-        .catch(callback);
+      processData().then(() => callback()).catch(callback);
     },
 
-    async flush(callback: TransformCallback) {
-      // Write any remaining data as final chunk
-      try {
-        await writeChunk();
-        callback();
-      } catch (err) {
-        callback(err as Error);
-      }
+    flush(callback) {
+      // Finalize the last chunk (may have remaining data)
+      finalizeCurrentChunk()
+        .then(() => callback())
+        .catch(callback);
     }
   });
 
-  // Process the file
-  const readStream = createReadStream(inputPath, { highWaterMark: 64 * 1024 });
+  async function finalizeCurrentChunk(): Promise<void> {
+    // Close the write stream
+    await new Promise<void>((resolve, reject) => {
+      currentWriteStream.end((err?: Error) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
 
-  await pipeline(readStream, chunker);
+    const chunkHash = currentChunkHash.digest('hex');
+
+    manifest = addChunkToManifest(manifest, {
+      index: currentChunkIndex,
+      filename: currentChunkFilename,
+      size: currentChunkBytesWritten,
+      hash: chunkHash,
+      uploaded: false
+    });
+    chunkPaths.push(currentChunkPath);
+
+    logger.debug('Chunk written', {
+      chunk: currentChunkIndex,
+      size: currentChunkBytesWritten,
+      hash: chunkHash
+    });
+  }
+
+  function startNextChunk(): void {
+    currentChunkIndex++;
+    currentChunkBytesWritten = 0;
+    currentChunkHash = createHash('sha256');
+    currentChunkFilename = getChunkFilename(manifest.fileId, currentChunkIndex);
+    currentChunkPath = join(outputDir, currentChunkFilename);
+    currentWriteStream = createWriteStream(currentChunkPath);
+  }
+
+  // Single-pass: read source file once, split + hash simultaneously
+  const readStream = createReadStream(inputPath, { highWaterMark: 1024 * 1024 });
+
+  await pipeline(readStream, splitter);
+
+  // Set the whole-file hash on the manifest
+  manifest.originalHash = fileHash.digest('hex');
+  logger.debug('Original file hash calculated', { hash: manifest.originalHash });
 
   // Update manifest status
   manifest = updateManifestStatus(manifest, 'uploading');

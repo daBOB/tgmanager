@@ -29,9 +29,9 @@ export interface FileManifest {
   updatedAt: string;
 }
 
-// ~3.8GB chunk size (maximizes while staying under 4GB premium limit)
-// Must be an integer — fractional byte counts cause EIO errors in Node.js streams
-export const DEFAULT_CHUNK_SIZE = Math.floor(3.8 * 1024 * 1024 * 1024);
+// ~1.9GB chunk size — stays under the 2GB regular account upload limit.
+// Premium accounts allow 4GB but we use a safe default for all account types.
+export const DEFAULT_CHUNK_SIZE = Math.floor(1.9 * 1024 * 1024 * 1024);
 
 /**
  * Create new manifest for file splitting operation
