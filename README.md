@@ -4,23 +4,26 @@ A secure, efficient command-line tool for managing file uploads to Telegram chan
 
 ## Features
 
-- 📁 **Bulk file uploads** - Upload single files or entire directories
-- 👥 **Multi-account support** - Manage multiple Telegram accounts
-- 🔄 **Automatic retry** - Handles rate limits with exponential backoff
-- 📊 **Progress tracking** - Real-time upload progress bars
-- 🖼️ **Smart image processing** - Automatic resizing for Telegram limits
-- 🎥 **Video optimization** - MP4 files with proper metadata
-- 🔒 **Secure configuration** - Environment-based credential management
-- 📝 **Comprehensive logging** - Detailed logs with rotation
-- ✅ **Input validation** - Secure path handling and validation
+- **Bulk file uploads** - Upload single files or entire directories to channels
+- **Telegram storage** - Store, download, and list files using a Telegram channel as cloud storage with automatic file splitting for large files
+- **Multi-account support** - Manage multiple Telegram accounts
+- **Automatic retry** - Handles rate limits and flood waits with exponential backoff
+- **Progress tracking** - Real-time upload/download progress bars
+- **Smart image processing** - Automatic resizing for Telegram dimension limits
+- **Video optimization** - MP4 files with proper metadata extraction
+- **Resume support** - Interrupted storage uploads can be resumed
+- **Secure configuration** - Environment-based credential management with session file protection
+- **Comprehensive logging** - Detailed logs with rotation
+- **Input validation** - Secure path handling, sanitization, and validation
+- **Process locking** - Prevents multiple instances from running with the same account
 
 ## Installation
 
 ### Prerequisites
 
-- Node.js 18 or higher
+- Node.js 22 or higher
 - FFmpeg (for video processing)
-- Sharp dependencies (automatic installation)
+- Sharp dependencies (automatic with `npm install`)
 - TypeScript (installed as dev dependency)
 
 ### Setup
@@ -74,12 +77,14 @@ npm run build:ts
 | `UPLOAD_TIMEOUT` | Upload timeout in milliseconds | `600000` |
 | `SESSION_DIR` | Directory for session storage | `sessions` (in project) |
 | `UPLOAD_DIR` | Default upload directory | `uploads` (in project) |
+| `TGMANAGER_CONFIG` | Path to a custom `.env` file | Auto-detected |
+| `TGMANAGER_HOME` | Base directory for sessions and config | Project directory / `~/.tgmanager` |
 
 ## Usage
 
-### Basic Commands
+### Running the Application
 
-For development (with TypeScript):
+For development (with TypeScript via tsx):
 ```bash
 npm run dev -- -a your_account -c upload -i @channel_username -f /path/to/file.mp4
 ```
@@ -89,35 +94,26 @@ For production (compiled JavaScript):
 npm start -- -a your_account -c upload -i @channel_username -f /path/to/file.mp4
 ```
 
+Or using standalone binaries (see [Building Binaries](#building-binaries)):
+```bash
+./uploader-linux -a your_account -c upload -i @channel_username -f /path/to/file.mp4
+```
+
+### Commands
+
+#### `upload` - Upload files to a channel
+
 Upload a single file:
 ```bash
-node dist/index.js -a your_account -c upload -i @channel_username -f /path/to/file.mp4
+node dist/index.js -a myaccount -c upload -i @mychannel -f /path/to/file.mp4
 ```
 
-Upload a directory:
+Upload a directory (all files uploaded concurrently):
 ```bash
-node dist/index.js -a your_account -c upload -i @channel_username -f /path/to/directory/
+node dist/index.js -a myaccount -c upload -i @mychannel -f /path/to/directory/
 ```
 
-Create a new channel:
-```bash
-node dist/index.js -a your_account -c create -n "My New Channel"
-```
-
-### Command Options
-
-| Option | Description | Required |
-|--------|-------------|----------|
-| `-a, --account <name>` | Account name from config | Yes |
-| `-c, --command <cmd>` | Command to execute (upload, create) | Yes |
-| `-i, --chat-id <id>` | Chat ID or @username | For upload |
-| `-f, --file-path <path>` | File or directory path | For upload |
-| `-n, --name <name>` | Channel name | For create |
-| `--delete-source` | Delete files after successful upload | No |
-
-### Examples
-
-Upload with source deletion:
+Upload with source deletion after success:
 ```bash
 node dist/index.js -a myaccount -c upload -i @mychannel -f video.mp4 --delete-source
 ```
@@ -127,24 +123,97 @@ Upload to a specific chat ID:
 node dist/index.js -a myaccount -c upload -i -1001234567890 -f document.pdf
 ```
 
-Development mode with hot reload:
+#### `create` - Create a new Telegram channel
+
 ```bash
-npm run dev -- -a myaccount -c upload -i @mychannel -f test.jpg
+node dist/index.js -a myaccount -c create -n "My New Channel"
 ```
+
+#### `upload-storage` - Upload a file to Telegram storage
+
+Uploads a file to a dedicated storage channel. Large files are automatically split into chunks. Files are identified by a virtual path (like a filesystem).
+
+```bash
+node dist/index.js -a myaccount -c upload-storage -f /path/to/largefile.zip --virtual-path /backups/largefile.zip
+```
+
+With a specific storage channel:
+```bash
+node dist/index.js -a myaccount -c upload-storage -f data.db --virtual-path /databases/data.db --storage-channel -1001234567890
+```
+
+#### `download-storage` - Download a file from Telegram storage
+
+Downloads a previously stored file by its virtual path. Chunks are downloaded with retry logic and merged automatically.
+
+```bash
+node dist/index.js -a myaccount -c download-storage --virtual-path /backups/largefile.zip
+```
+
+Download to a specific location:
+```bash
+node dist/index.js -a myaccount -c download-storage --virtual-path /backups/largefile.zip --output-path /tmp/restored.zip
+```
+
+Force overwrite existing file:
+```bash
+node dist/index.js -a myaccount -c download-storage --virtual-path /backups/largefile.zip --force
+```
+
+#### `list-storage` - List files in Telegram storage
+
+List all stored files:
+```bash
+node dist/index.js -a myaccount -c list-storage
+```
+
+Filter by virtual path prefix:
+```bash
+node dist/index.js -a myaccount -c list-storage --virtual-path /backups/
+```
+
+### CLI Options
+
+| Option | Description | Required |
+|--------|-------------|----------|
+| `-a, --account <name>` | Account name from config | Yes |
+| `-c, --command <cmd>` | Command to execute | Yes |
+| `-i, --chat-id <id>` | Chat ID or @username | For `upload` |
+| `-f, --file-path <path>` | File or directory path | For `upload`, `upload-storage` |
+| `-n, --name <name>` | Channel name | For `create` |
+| `--delete-source` | Delete files after successful upload | No |
+| `--virtual-path <path>` | Virtual path for storage operations | For `upload-storage`, `download-storage` |
+| `--output-path <path>` | Output path for downloads | For `download-storage` |
+| `--storage-channel <id>` | Storage channel ID (auto-creates if omitted) | No |
+| `--force` | Force overwrite existing files | No |
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `upload` | Upload files or directories to a Telegram channel |
+| `create` | Create a new Telegram broadcast channel |
+| `upload-storage` | Upload a file to Telegram storage with automatic splitting |
+| `download-storage` | Download a file from Telegram storage by virtual path |
+| `list-storage` | List all files stored in Telegram storage |
 
 ## File Processing
 
 ### Supported File Types
 
-- **Videos**: MP4 files with automatic metadata extraction
-- **Images**: JPG, JPEG, PNG, GIF with automatic resizing
-- **Documents**: All other file types
+- **Videos**: MP4 files with automatic metadata extraction (width, height, duration)
+- **Images**: JPG, JPEG, PNG, GIF with automatic resizing when exceeding Telegram limits
+- **Documents**: All other file types uploaded as-is
 
 ### Size Limits
 
-- **Regular accounts**: 2 GB per file
-- **Premium accounts**: 4 GB per file
-- **Image dimensions**: Max 5000x5000 pixels
+| Account Type | Direct Upload Limit | Storage Upload |
+|-------------|--------------------|----|
+| Regular | 2 GB per file | Unlimited (auto-split) |
+| Premium | 4 GB per file | Unlimited (auto-split) |
+
+- **Image dimensions**: Max 5000x5000 pixels (auto-resized if exceeded)
+- **Storage uploads**: Files exceeding the account limit are automatically split into chunks and reassembled on download
 
 ## Security Best Practices
 
@@ -179,6 +248,15 @@ npm run type-check
 # Run ESLint
 npm run lint
 
+# Run tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Full build (TypeScript + native binaries + Docker)
+npm run build
+
 # Start production version
 npm start
 ```
@@ -197,13 +275,13 @@ npm run build:ts
 
 # Then package for your platform
 # Windows
-pkg dist/index.js --target node18-win-x64 --output dist/tgmanager.exe
+pkg dist/index.js --target node22-win-x64 --output dist/tgmanager.exe
 
 # macOS
-pkg dist/index.js --target node18-macos-x64 --output dist/tgmanager
+pkg dist/index.js --target node22-macos-x64 --output dist/tgmanager
 
 # Linux
-pkg dist/index.js --target node18-linux-x64 --output dist/tgmanager
+pkg dist/index.js --target node22-linux-x64 --output dist/tgmanager
 ```
 
 ### Using Standalone Executables
@@ -228,6 +306,136 @@ Run with Docker:
 docker run -v ~/.tgmanager:/root/.tgmanager tgmanager -a account -c upload -i @channel -f /path/to/file
 ```
 
+## Telegram Storage
+
+The storage feature uses a dedicated Telegram channel as a file storage backend. Files are addressed by virtual paths (e.g., `/backups/db.sql`) and tracked via JSON manifests.
+
+### How It Works
+
+1. **Upload**: Files exceeding the Telegram size limit are split into chunks automatically. Each chunk is uploaded as a separate message. A manifest message tracks all chunks, checksums, and metadata.
+2. **Download**: The manifest is fetched by virtual path, chunks are downloaded with retry logic and integrity verification (SHA-256), then merged back into the original file.
+3. **List**: Searches the storage channel for manifest messages and displays stored files grouped by directory.
+
+### Storage Channel
+
+- If `--storage-channel` is not specified, TGManager auto-creates a channel named "TGManager Storage"
+- The channel is reused across sessions (found by title)
+- Do not delete the storage channel or its messages manually
+
+### Resume Support
+
+If a storage upload is interrupted, re-running the same command will skip already-uploaded chunks and resume from where it left off.
+
+### Examples
+
+Below are practical workflows for managing files with Telegram storage. All examples use `node dist/index.js` — replace with `./uploader-linux` (or `npm start --`) if using binaries or production mode.
+
+#### Back up a database
+
+```bash
+# Upload today's database dump
+node dist/index.js -a myaccount -c upload-storage \
+  -f /var/backups/postgres-2026-02-05.sql.gz \
+  --virtual-path /backups/db/postgres-2026-02-05.sql.gz
+
+# List all database backups
+node dist/index.js -a myaccount -c list-storage --virtual-path /backups/db/
+
+# Restore a specific backup
+node dist/index.js -a myaccount -c download-storage \
+  --virtual-path /backups/db/postgres-2026-02-05.sql.gz \
+  --output-path /tmp/restore.sql.gz
+```
+
+#### Store large video files and free disk space
+
+```bash
+# Upload a large video (auto-splits if it exceeds Telegram's limit)
+node dist/index.js -a myaccount -c upload-storage \
+  -f ~/Videos/recording-4k.mkv \
+  --virtual-path /videos/recording-4k.mkv \
+  --delete-source
+
+# Verify it's stored
+node dist/index.js -a myaccount -c list-storage --virtual-path /videos/
+
+# Download it later on another machine
+node dist/index.js -a myaccount -c download-storage \
+  --virtual-path /videos/recording-4k.mkv \
+  --output-path ~/Downloads/recording-4k.mkv
+```
+
+#### Organize project archives by folder
+
+```bash
+# Upload multiple project archives with a folder structure
+node dist/index.js -a myaccount -c upload-storage \
+  -f ./project-v1.tar.gz --virtual-path /archives/myapp/v1.0.0.tar.gz
+
+node dist/index.js -a myaccount -c upload-storage \
+  -f ./project-v2.tar.gz --virtual-path /archives/myapp/v2.0.0.tar.gz
+
+# List only files under /archives/myapp/
+node dist/index.js -a myaccount -c list-storage --virtual-path /archives/myapp/
+```
+
+#### Use a dedicated storage channel
+
+By default, TGManager auto-creates a channel. If you want to use a specific channel (e.g., to separate personal and work storage):
+
+```bash
+# Upload to a specific channel
+node dist/index.js -a myaccount -c upload-storage \
+  -f ./report.pdf \
+  --virtual-path /work/reports/q1-2026.pdf \
+  --storage-channel -1001234567890
+
+# List and download from the same channel
+node dist/index.js -a myaccount -c list-storage \
+  --storage-channel -1001234567890
+
+node dist/index.js -a myaccount -c download-storage \
+  --virtual-path /work/reports/q1-2026.pdf \
+  --storage-channel -1001234567890
+```
+
+#### Resume an interrupted upload
+
+```bash
+# Start uploading a 10 GB file — gets interrupted at 60%
+node dist/index.js -a myaccount -c upload-storage \
+  -f ~/iso/ubuntu-server.iso \
+  --virtual-path /iso/ubuntu-server.iso
+# ^C (interrupted)
+
+# Re-run the exact same command — skips already uploaded chunks
+node dist/index.js -a myaccount -c upload-storage \
+  -f ~/iso/ubuntu-server.iso \
+  --virtual-path /iso/ubuntu-server.iso
+# Resuming upload: 6/10 chunks already uploaded, uploading remaining 4...
+```
+
+#### Download and overwrite an existing file
+
+```bash
+# First download
+node dist/index.js -a myaccount -c download-storage \
+  --virtual-path /backups/db/latest.sql.gz \
+  --output-path ./latest.sql.gz
+
+# Download again — fails because file already exists
+node dist/index.js -a myaccount -c download-storage \
+  --virtual-path /backups/db/latest.sql.gz \
+  --output-path ./latest.sql.gz
+# Error: Output file already exists. Use --force to overwrite.
+
+# Force overwrite
+node dist/index.js -a myaccount -c download-storage \
+  --virtual-path /backups/db/latest.sql.gz \
+  --output-path ./latest.sql.gz \
+  --force
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -250,6 +458,15 @@ docker run -v ~/.tgmanager:/root/.tgmanager tgmanager -a account -c upload -i @c
    - Delete session folder and re-authenticate
    - Check session directory permissions
 
+5. **Storage download fails**
+   - Verify the virtual path is correct with `list-storage`
+   - Ensure the storage channel and its messages haven't been deleted
+   - Use `--force` if the output file already exists
+
+6. **Another instance already running**
+   - A process lock prevents concurrent use of the same account
+   - Wait for the other instance to finish, or check for stale lock files in the `locks/` directory
+
 ## Contributing
 
 1. Fork the repository
@@ -264,14 +481,16 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Technology Stack
 
-- **Language**: TypeScript with ES modules
-- **Runtime**: Node.js 18+
+- **Language**: TypeScript 5.x with ES modules
+- **Runtime**: Node.js 22+
 - **Type Safety**: Full TypeScript support with strict mode
 - **Telegram API**: [GramJS](https://github.com/gram-js/gramjs)
 - **Image Processing**: [Sharp](https://sharp.pixelplumbing.com/)
 - **Video Processing**: [FFmpeg](https://ffmpeg.org/)
 - **Logging**: Winston with rotation
 - **CLI**: Commander.js
+- **Testing**: Vitest
+- **Build**: esbuild (bundling) + pkg (native binaries)
 
 ## Acknowledgments
 

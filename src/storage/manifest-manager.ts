@@ -29,8 +29,9 @@ export interface FileManifest {
   updatedAt: string;
 }
 
-// 3.8GB chunk size per user preference (maximizes while staying under 4GB premium limit)
-export const DEFAULT_CHUNK_SIZE = 3.8 * 1024 * 1024 * 1024;
+// ~3.8GB chunk size (maximizes while staying under 4GB premium limit)
+// Must be an integer — fractional byte counts cause EIO errors in Node.js streams
+export const DEFAULT_CHUNK_SIZE = Math.floor(3.8 * 1024 * 1024 * 1024);
 
 /**
  * Create new manifest for file splitting operation
@@ -42,6 +43,7 @@ export function createManifest(
   originalHash: string,
   chunkSize: number = DEFAULT_CHUNK_SIZE
 ): FileManifest {
+  chunkSize = Math.floor(chunkSize);
   const totalChunks = Math.ceil(originalSize / chunkSize);
   const fileId = randomUUID();
   const now = new Date().toISOString();
