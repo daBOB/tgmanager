@@ -245,8 +245,10 @@ export class StorageService {
     const manifestJson = JSON.stringify(manifest, null, 2);
     const caption = `#manifest fileId:${manifest.fileId} path:${this.sanitizeCaption(manifest.originalPath)} name:${this.sanitizeCaption(manifest.originalName)}`;
 
-    // Telegram message limit is 4096 chars
-    const fullMessage = `${caption}\n\n\`\`\`json\n${manifestJson}\n\`\`\``;
+    // Telegram message limit is 4096 chars.
+    // Note: Don't use ```json code blocks — Telegram strips backtick formatting
+    // from the raw message text, breaking JSON extraction on retrieval.
+    const fullMessage = `${caption}\n\n${manifestJson}`;
 
     if (fullMessage.length <= 4096) {
       const message = await this.client.sendMessage(channelId, { message: fullMessage });
@@ -335,7 +337,7 @@ export class StorageService {
   }
 
   /**
-   * Get manifest from message by parsing JSON from code block or file attachment
+   * Get manifest from message by parsing JSON from text or file attachment
    */
   async getManifestFromMessage(messageId: number): Promise<FileManifest | null> {
     const channelId = this.getStorageChannelId();
@@ -347,46 +349,23 @@ export class StorageService {
       return null;
     }
 
-    // Try extracting JSON from code block first
-    if (message.message) {
-      const jsonMatch = message.message.match(/```json\n([\s\S]*?)\n```/);
-      if (jsonMatch) {
-        try {
-          const jsonContent = jsonMatch[1];
-          if (jsonContent) {
-            return JSON.parse(jsonContent) as FileManifest;
-          }
-        } catch {
-          // Fall through to file attachment fallback
-        }
-      }
-    }
-
-    // Try downloading as file attachment
-    if (message.media) {
-      try {
-        const buffer = await this.client.downloadMedia(message);
-        if (buffer) {
-          return JSON.parse((buffer as Buffer).toString('utf-8')) as FileManifest;
-        }
-      } catch {
-        // Fall through
-      }
-    }
+    return this.parseManifestFromMessage(message);
 
     return null;
   }
 
   /**
-   * List all stored files by searching for manifest messages
+   * List all stored files by iterating channel messages and filtering for manifests.
+   * Uses direct message iteration instead of Telegram search API, which can be
+   * unreliable for small/new channels where the search index hasn't been built.
    */
   async listStoredFiles(): Promise<StoredFileInfo[]> {
     const channelId = this.getStorageChannelId();
     const files: StoredFileInfo[] = [];
 
-    // Search for manifest messages
+    // Iterate messages directly — Telegram's search API is unreliable for
+    // small or recently created channels where the full-text index may not exist
     const messages = await this.client.getMessages(channelId, {
-      search: '#manifest',
       limit: 100
     });
 
@@ -472,18 +451,20 @@ export class StorageService {
   }
 
   /**
-   * Parse manifest from message text or file attachment
+   * Parse manifest from message text or file attachment.
+   * Note: Telegram strips markdown backtick formatting from messages, so we
+   * extract the JSON object directly by finding the first '{' character.
    */
   private async parseManifestFromMessage(message: Api.Message): Promise<FileManifest | null> {
-    // Try extracting JSON from code block first
+    // Try extracting JSON from message text
     if (message.message) {
-      const jsonMatch = message.message.match(/```json\n([\s\S]*?)\n```/);
-      if (jsonMatch) {
+      // Find the JSON object start — Telegram strips ```json code block markers,
+      // so we locate the first '{' which starts the manifest JSON
+      const jsonStart = message.message.indexOf('{');
+      if (jsonStart >= 0) {
         try {
-          const jsonContent = jsonMatch[1];
-          if (jsonContent) {
-            return JSON.parse(jsonContent) as FileManifest;
-          }
+          const jsonContent = message.message.substring(jsonStart);
+          return JSON.parse(jsonContent) as FileManifest;
         } catch {
           // Fall through to file attachment fallback
         }
