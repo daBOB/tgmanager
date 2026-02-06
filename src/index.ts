@@ -119,7 +119,8 @@ program
   .option('--virtual-path <path>', 'Virtual path for storage operations')
   .option('--output-path <path>', 'Output path for download operations')
   .option('--storage-channel <id>', 'Storage channel ID (optional)')
-  .option('--force', 'Force overwrite existing files');
+  .option('--force', 'Force overwrite existing files')
+  .option('--wait', 'Wait for queued upload to complete');
 
 program.parse(process.argv);
 
@@ -173,12 +174,79 @@ const main = async (): Promise<void> => {
     validateCommand(command, options);
     validateAccountName(account, Object.keys(config.accounts));
 
+    // Queue management commands (no lock or TG client needed)
+    if (command === 'queue-status') {
+      const { queueStatusCommand } = await import('./commands/queue-status-command.js');
+      await queueStatusCommand(account);
+      process.exit(0);
+    }
+
+    if (command === 'queue-cancel' && name) {
+      const { queueCancelCommand } = await import('./commands/queue-cancel-command.js');
+      const success = await queueCancelCommand(account, name);
+      process.exit(success ? 0 : 1);
+    }
+
+    // Handle upload-storage: add to queue BEFORE lock
+    let queuedJob: any = null;
+    let uploadPath: string | undefined;
+
+    if (filePath) {
+      // Handle absolute paths correctly with validation
+      if (filePath.startsWith('/')) {
+        uploadPath = filePath;
+      } else {
+        uploadPath = validatePath(filePath, config.app.uploadDir);
+      }
+
+      // Ensure the uploads directory exists
+      if (!existsSync(config.app.uploadDir)) {
+        mkdirSync(config.app.uploadDir, { recursive: true });
+      }
+    }
+
+    if (command === 'upload-storage' && uploadPath && options.virtualPath) {
+      // Validate file exists
+      if (!existsSync(uploadPath)) {
+        logger.error(`File not found: ${uploadPath}`);
+        console.error(`❌ File not found: ${uploadPath}`);
+        process.exit(1);
+      }
+
+      // Add to queue
+      const { addJob, getQueuePosition } = await import('./queue/queue-manager.js');
+      queuedJob = addJob(account, {
+        filePath: uploadPath,
+        virtualPath: options.virtualPath,
+        storageChannelId: options.storageChannel,
+        deleteSource
+      });
+      const position = getQueuePosition(account, queuedJob.id);
+      console.log(`\n✓ Added to upload queue (position: ${position})`);
+      logger.info('Job added to queue', { jobId: queuedJob.id, position });
+    }
+
     // Create and acquire process lock
     const lockDir = join(config.app.sessionDir, '..', 'locks');
     processLock = createProcessLock(lockDir, account);
     processLock.setupCleanup();
 
     if (!processLock.acquire()) {
+      // For upload-storage: job already queued, handle --wait or exit
+      if (command === 'upload-storage' && queuedJob) {
+        if (options.wait) {
+          console.log('⏳ Waiting for upload to complete...\n');
+          logger.info('Waiting for job to complete', { jobId: queuedJob.id });
+          const { pollJobStatusUntilDone } = await import('./queue/queue-process-utils.js');
+          const { getJob } = await import('./queue/queue-manager.js');
+          const success = await pollJobStatusUntilDone(getJob, account, queuedJob.id, 1000);
+          process.exit(success ? 0 : 1);
+        }
+        console.log('✓ Worker is active. Upload queued and will be processed.\n');
+        process.exit(0);
+      }
+
+      // Other commands: original error
       logger.error('Failed to acquire process lock. Another instance may be running.');
       console.error('\n⚠️  Another instance is already running with this account.');
       console.error('Please wait for it to finish or stop it before starting a new one.\n');
@@ -187,21 +255,6 @@ const main = async (): Promise<void> => {
     
     if (chatId) {
       validateChatId(chatId);
-    }
-
-    let uploadPath: string | undefined;
-    if (filePath) {
-      // Handle absolute paths correctly with validation
-      if (filePath.startsWith('/')) {
-        uploadPath = filePath;
-      } else {
-        uploadPath = validatePath(filePath, config.app.uploadDir);
-      }
-      
-      // Ensure the uploads directory exists
-      if (!existsSync(config.app.uploadDir)) {
-        mkdirSync(config.app.uploadDir, { recursive: true });
-      }
     }
 
     const client = await startClient(account);
@@ -292,15 +345,10 @@ const main = async (): Promise<void> => {
       const channelId = `-100${channel.id.toJSNumber()}`;
       logger.info('Channel created successfully', { channelId, name: sanitizedName });
       process.exit(0);
-    } else if (command === 'upload-storage' && filePath && options.virtualPath) {
-      const { uploadStorageCommand } = await import('./commands/upload-storage-command.js');
-      const success = await uploadStorageCommand(client, {
-        filePath: uploadPath!,
-        virtualPath: options.virtualPath,
-        storageChannelId: options.storageChannel,
-        deleteSource
-      });
-      process.exit(success ? 0 : 1);
+    } else if (command === 'upload-storage') {
+      const { startWorker } = await import('./queue/queue-worker.js');
+      const result = await startWorker(account, client);
+      process.exit(result.failed > 0 ? 1 : 0);
 
     } else if (command === 'download-storage' && options.virtualPath) {
       const { downloadStorageCommand } = await import('./commands/download-storage-command.js');

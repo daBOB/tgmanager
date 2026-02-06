@@ -77,6 +77,7 @@ export interface CommandOptions {
   outputPath?: string;
   storageChannel?: string;
   force?: boolean;
+  wait?: boolean;
 }
 
 export interface UploadResult {

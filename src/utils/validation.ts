@@ -92,7 +92,7 @@ export function validateFileExists(filePath: string): Stats {
  * Validates command arguments
  */
 export function validateCommand(command: string | undefined, options: CommandOptions): CommandOptions {
-  const validCommands = ['upload', 'create', 'upload-storage', 'download-storage', 'list-storage'];
+  const validCommands = ['upload', 'create', 'upload-storage', 'download-storage', 'list-storage', 'queue-status', 'queue-cancel'];
 
   if (!command || !validCommands.includes(command)) {
     throw new Error(`Invalid command: ${command}. Valid commands: ${validCommands.join(', ')}`);
