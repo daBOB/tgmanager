@@ -1,6 +1,6 @@
 // src/storage/storage-service.ts
 import { Api } from 'telegram';
-import { writeFile, mkdir } from 'fs/promises';
+import { mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname } from 'path';
 import type { TelegramClient } from '../types/index.js';
@@ -9,7 +9,7 @@ import {
   updateChunkMessageId,
   getChunksToUpload
 } from './manifest-manager.js';
-import { verifyChunk } from './checksum-utils.js';
+import { verifyFile } from './checksum-utils.js';
 import logger from '../logger.js';
 
 export interface StoredFileInfo {
@@ -307,30 +307,28 @@ export class StorageService {
       return false;
     }
 
-    // Download the media
-    const buffer = await this.client.downloadMedia(message, {
+    // Download media directly to file (avoids loading multi-GB chunks into memory)
+    const result = await this.client.downloadMedia(message, {
+      outputFile: outputPath,
       progressCallback: onProgress ? (downloaded: any) => {
         const progress = typeof downloaded === 'number' ? downloaded : Number(downloaded);
         onProgress(progress * 100);
       } : undefined,
     });
 
-    if (!buffer) {
+    if (!result) {
       logger.error('Failed to download chunk', { messageId });
       return false;
     }
 
-    // Verify hash if provided
+    // Verify hash from file on disk
     if (expectedHash) {
-      const isValid = verifyChunk(buffer as Buffer, expectedHash);
+      const isValid = await verifyFile(outputPath, expectedHash);
       if (!isValid) {
         logger.error('Chunk hash verification failed', { messageId, expectedHash });
         return false;
       }
     }
-
-    // Write to file
-    await writeFile(outputPath, buffer as Buffer);
 
     logger.debug('Chunk downloaded', { messageId, outputPath });
     return true;
