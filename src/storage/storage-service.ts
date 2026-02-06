@@ -374,10 +374,15 @@ export class StorageService {
 
       const manifest = await this.parseManifestFromMessage(message);
       if (manifest) {
+        // Build full virtual path: originalPath is the directory prefix (e.g., "Video/VR"),
+        // originalName is the filename. Join them to get full path for lookup.
+        const dir = manifest.originalPath.replace(/\/+$/, '');
+        const fullPath = dir ? `${dir}/${manifest.originalName}` : manifest.originalName;
+
         files.push({
           fileId: manifest.fileId,
           originalName: manifest.originalName,
-          virtualPath: manifest.originalPath,
+          virtualPath: fullPath,
           size: manifest.originalSize,
           status: manifest.status,
           createdAt: manifest.createdAt,
