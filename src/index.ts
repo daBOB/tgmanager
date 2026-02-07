@@ -267,6 +267,14 @@ const main = async (): Promise<void> => {
         process.exit(1);
       }
 
+      // Reject directories (not yet supported for upload-storage)
+      if (statSync(uploadPath).isDirectory()) {
+        logger.error(`Path is a directory: ${uploadPath}`);
+        console.error(`❌ '${basename(uploadPath)}' is a directory. Directory uploads are not yet supported for storage.`);
+        console.error(`   Upload individual files instead.`);
+        process.exit(1);
+      }
+
       // Add to queue
       const { addJob, getQueuePosition } = await import('./queue/queue-manager.js');
       queuedJob = addJob(account, {

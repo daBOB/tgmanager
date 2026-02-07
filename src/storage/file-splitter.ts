@@ -303,11 +303,9 @@ export async function cleanupChunks(
  */
 export function needsSplitting(
   fileSize: number,
-  isPremium: boolean = false
+  _isPremium: boolean = false
 ): boolean {
-  const maxSize = isPremium
-    ? 4 * 1024 * 1024 * 1024  // 4GB
-    : 2 * 1024 * 1024 * 1024; // 2GB
-
-  return fileSize > maxSize;
+  // Always split if file exceeds chunk size — Telegram rejects files near the 4GB API limit
+  // even for premium accounts, so use DEFAULT_CHUNK_SIZE as the universal threshold.
+  return fileSize > DEFAULT_CHUNK_SIZE;
 }
