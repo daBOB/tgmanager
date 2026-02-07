@@ -88,14 +88,29 @@ export function validateFileExists(filePath: string): Stats {
   }
 }
 
+/** Canonical command names accepted by the CLI */
+export const VALID_COMMANDS = ['upload', 'create', 'upload-storage', 'download-storage', 'list-storage', 'queue-status', 'queue-cancel'];
+
+/** Short aliases for common storage commands */
+const COMMAND_ALIASES: Record<string, string> = {
+  store: 'upload-storage',
+  get: 'download-storage',
+  ls: 'list-storage',
+};
+
+/**
+ * Resolve a command alias to its canonical name. Returns input unchanged if not an alias.
+ */
+export function resolveCommandAlias(cmd: string): string {
+  return COMMAND_ALIASES[cmd] ?? cmd;
+}
+
 /**
  * Validates command arguments
  */
 export function validateCommand(command: string | undefined, options: CommandOptions): CommandOptions {
-  const validCommands = ['upload', 'create', 'upload-storage', 'download-storage', 'list-storage', 'queue-status', 'queue-cancel'];
-
-  if (!command || !validCommands.includes(command)) {
-    throw new Error(`Invalid command: ${command}. Valid commands: ${validCommands.join(', ')}`);
+  if (!command || !VALID_COMMANDS.includes(command)) {
+    throw new Error(`Invalid command: ${command}. Valid commands: ${VALID_COMMANDS.join(', ')}`);
   }
 
   if (command === 'upload') {

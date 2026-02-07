@@ -9,7 +9,7 @@ import { join, basename, resolve } from 'path';
 import { homedir } from 'os';
 import config from './config.js';
 import logger from './logger.js';
-import { validatePath, validateChatId, validateAccountName, validateCommand, sanitizeInput } from './utils/validation.js';
+import { validatePath, validateChatId, validateAccountName, validateCommand, sanitizeInput, resolveCommandAlias, VALID_COMMANDS } from './utils/validation.js';
 import { createSession } from './session-helper.js';
 import { createProcessLock } from './utils/process-lock.js';
 import { AuthKeyDuplicatedError, handleError } from './utils/errors.js';
@@ -110,7 +110,7 @@ const _isPremium = async (client: TelegramClient): Promise<boolean> => {
 const program = new Command();
 
 program
-  .requiredOption('-a, --account <account>', 'Account name')
+  .option('-a, --account <account>', 'Account name (or set TGMANAGER_DEFAULT_ACCOUNT)')
   .option('-c, --command <command>', 'Command to execute')
   .option('-i, --chat-id <id>', 'Chat ID')
   .option('-f, --file-path <path>', 'File path')
@@ -120,11 +120,56 @@ program
   .option('--output-path <path>', 'Output path for download operations')
   .option('--storage-channel <id>', 'Storage channel ID (optional)')
   .option('--force', 'Force overwrite existing files')
-  .option('--wait', 'Wait for queued upload to complete');
+  .option('--wait', 'Wait for queued upload to complete')
+  .allowExcessArguments(true);
 
 program.parse(process.argv);
 
 const options = program.opts<CommandOptions>();
+
+// Resolve account: CLI flag > TGMANAGER_DEFAULT_ACCOUNT env var > error
+if (!options.account) {
+  const defaultAccount = process.env.TGMANAGER_DEFAULT_ACCOUNT;
+  if (defaultAccount) {
+    options.account = defaultAccount;
+  }
+}
+
+// Resolve command from positional args if -c not provided
+const positionalArgs = program.args;
+if (!options.command && positionalArgs.length > 0 && positionalArgs[0]) {
+  const resolved = resolveCommandAlias(positionalArgs[0]);
+  if (VALID_COMMANDS.includes(resolved)) {
+    options.command = resolved;
+    applyPositionalArgs(options, resolved, positionalArgs.slice(1));
+  }
+} else if (options.command) {
+  // Resolve alias on -c flag (e.g., -c store -> upload-storage)
+  options.command = resolveCommandAlias(options.command);
+  // Apply remaining positional args as file/virtualPath if not set via flags
+  if (positionalArgs.length > 0) {
+    applyPositionalArgs(options, options.command, positionalArgs);
+  }
+}
+
+/**
+ * Map positional arguments to options based on the resolved command.
+ * Explicit flags always take priority over positional args.
+ */
+function applyPositionalArgs(opts: CommandOptions, command: string, args: string[]): void {
+  switch (command) {
+    case 'upload-storage':
+      if (!opts.filePath && args.length >= 1) opts.filePath = args[0];
+      if (!opts.virtualPath && args.length >= 2) opts.virtualPath = args[1];
+      break;
+    case 'download-storage':
+      if (!opts.virtualPath && args.length >= 1) opts.virtualPath = args[0];
+      break;
+    case 'list-storage':
+      if (!opts.virtualPath && args.length >= 1) opts.virtualPath = args[0];
+      break;
+  }
+}
 
 /**
  * Upload a single file using provided Uploader instance.
@@ -168,7 +213,16 @@ const main = async (): Promise<void> => {
       }
     }
 
-    const { account, command, chatId, filePath, deleteSource, name } = options;
+    const { command, chatId, filePath, deleteSource, name } = options;
+
+    // Resolve account: error if still not set after env var fallback
+    if (!options.account) {
+      const available = Object.keys(config.accounts).join(', ');
+      console.error(`Error: Account required. Use -a <account> or set TGMANAGER_DEFAULT_ACCOUNT env var.`);
+      console.error(`Available accounts: ${available}`);
+      process.exit(1);
+    }
+    const account = options.account;
 
     // Validate inputs
     validateCommand(command, options);

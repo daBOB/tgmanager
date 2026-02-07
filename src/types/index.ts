@@ -67,7 +67,7 @@ export interface UploadOptions {
 }
 
 export interface CommandOptions {
-  account: string;
+  account?: string;
   command?: string;
   chatId?: string;
   filePath?: string;

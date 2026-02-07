@@ -79,8 +79,33 @@ npm run build:ts
 | `UPLOAD_DIR` | Default upload directory | `uploads` (in project) |
 | `TGMANAGER_CONFIG` | Path to a custom `.env` file | Auto-detected |
 | `TGMANAGER_HOME` | Base directory for sessions and config | Project directory / `~/.tgmanager` |
+| `TGMANAGER_DEFAULT_ACCOUNT` | Default account name (skip `-a` flag) | None |
 
 ## Usage
+
+### Shorthand Syntax
+
+Set a default account to skip the `-a` flag:
+```bash
+export TGMANAGER_DEFAULT_ACCOUNT=myaccount
+```
+
+Use short command aliases with positional arguments:
+```bash
+# Upload to storage (store = upload-storage)
+./uploader-linux store /path/to/file.zip /backups/file.zip
+
+# Download from storage (get = download-storage)
+./uploader-linux get /backups/file.zip --output-path ./restored.zip
+
+# List storage files (ls = list-storage)
+./uploader-linux ls /backups/
+
+# Aliases work with flags too
+./uploader-linux store /path/to/file.zip /backups/file.zip --delete-source --wait
+```
+
+All original flag-based syntax remains fully supported.
 
 ### Running the Application
 
@@ -193,9 +218,9 @@ node dist/index.js -a myaccount -c list-storage --virtual-path /backups/
 |---------|-------------|
 | `upload` | Upload files or directories to a Telegram channel |
 | `create` | Create a new Telegram broadcast channel |
-| `upload-storage` | Upload a file to Telegram storage with automatic splitting |
-| `download-storage` | Download a file from Telegram storage by virtual path |
-| `list-storage` | List all files stored in Telegram storage |
+| `upload-storage` / `store` | Upload a file to Telegram storage with automatic splitting |
+| `download-storage` / `get` | Download a file from Telegram storage by virtual path |
+| `list-storage` / `ls` | List all files stored in Telegram storage |
 
 ## File Processing
 
