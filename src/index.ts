@@ -5,7 +5,7 @@ import { readdir } from 'fs/promises';
 import { Command } from 'commander';
 import pLimit from 'p-limit';
 import { Uploader } from './Uploader.js';
-import { join, basename } from 'path';
+import { join, basename, resolve } from 'path';
 import { homedir } from 'os';
 import config from './config.js';
 import logger from './logger.js';
@@ -192,11 +192,11 @@ const main = async (): Promise<void> => {
     let uploadPath: string | undefined;
 
     if (filePath) {
-      // Handle absolute paths correctly with validation
+      // Resolve file paths: absolute paths used as-is, relative paths resolved against CWD
       if (filePath.startsWith('/')) {
         uploadPath = filePath;
       } else {
-        uploadPath = validatePath(filePath, config.app.uploadDir);
+        uploadPath = resolve(filePath);
       }
 
       // Ensure the uploads directory exists
