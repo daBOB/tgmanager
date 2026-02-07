@@ -1,10 +1,8 @@
 // src/storage/file-splitter.ts
 import { createReadStream, createWriteStream, existsSync } from 'fs';
-import { mkdir, stat, unlink } from 'fs/promises';
+import { mkdir, stat, unlink, open } from 'fs/promises';
 import { join, basename } from 'path';
-import { pipeline } from 'stream/promises';
 import { createHash } from 'crypto';
-import { Transform } from 'stream';
 import {
   FileManifest,
   createManifest,
@@ -35,6 +33,10 @@ export interface SplitResult {
   chunkPaths: string[];
 }
 
+const READ_BUFFER_SIZE = 1024 * 1024; // 1MB per read call
+const MAX_IO_RETRIES = 5;
+const IO_RETRY_DELAY_MS = 3000;
+
 /**
  * Get chunk filename for a given file ID and index
  */
@@ -43,9 +45,39 @@ export function getChunkFilename(fileId: string, index: number): string {
 }
 
 /**
- * Split a large file into chunks using byte-range streaming.
- * Each chunk is read directly from the source using start/end offsets,
- * piped through a hash transform, and written to disk — zero memory accumulation.
+ * Read exactly `length` bytes from fd at `position` with retry on transient I/O errors.
+ * Returns the number of bytes actually read (may be less at EOF).
+ */
+async function readWithRetry(
+  fd: import('fs/promises').FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number
+): Promise<number> {
+  for (let attempt = 1; attempt <= MAX_IO_RETRIES; attempt++) {
+    try {
+      const result = await fd.read(buffer, offset, length, position);
+      return result.bytesRead;
+    } catch (err: any) {
+      const isTransient = err?.code === 'EIO' || err?.code === 'EAGAIN';
+      if (isTransient && attempt < MAX_IO_RETRIES) {
+        logger.warn(`I/O error at byte ${position}, retry ${attempt}/${MAX_IO_RETRIES} in ${IO_RETRY_DELAY_MS / 1000}s...`, {
+          code: err.code
+        });
+        await new Promise(r => setTimeout(r, IO_RETRY_DELAY_MS));
+        continue;
+      }
+      throw err;
+    }
+  }
+  return 0; // unreachable
+}
+
+/**
+ * Split a large file into chunks using fd-based reads with retry.
+ * Each read call retries on transient I/O errors (NFS soft mounts, flaky drives).
+ * File hash and per-chunk hashes computed simultaneously — single pass, zero accumulation.
  */
 export async function splitFile(
   inputPath: string,
@@ -58,12 +90,10 @@ export async function splitFile(
     onProgress
   } = options;
 
-  // Ensure output directory exists
   if (!existsSync(outputDir)) {
     await mkdir(outputDir, { recursive: true });
   }
 
-  // Get file stats
   const stats = await stat(inputPath);
   const originalSize = stats.size;
   const originalName = basename(inputPath);
@@ -76,125 +106,82 @@ export async function splitFile(
     totalChunks
   });
 
-  // Compute whole-file hash and split in a single pass:
-  // Stream the file once, forking data to a file-level hash and to per-chunk output files.
   const fileHash = createHash('sha256');
   let manifest = createManifest(originalName, virtualPath, originalSize, '', chunkSize);
   const chunkPaths: string[] = [];
 
-  let globalBytesProcessed = 0;
-  let currentChunkIndex = 0;
-  let currentChunkBytesWritten = 0;
-  let currentChunkHash = createHash('sha256');
-  let currentChunkFilename = getChunkFilename(manifest.fileId, currentChunkIndex);
-  let currentChunkPath = join(outputDir, currentChunkFilename);
-  let currentWriteStream = createWriteStream(currentChunkPath);
+  const fd = await open(inputPath, 'r');
+  const readBuf = Buffer.allocUnsafe(READ_BUFFER_SIZE);
+  let filePosition = 0;
 
-  const splitter = new Transform({
-    transform(data: Buffer, _encoding, callback) {
-      let offset = 0;
+  try {
+    for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+      const chunkFilename = getChunkFilename(manifest.fileId, chunkIdx);
+      const chunkPath = join(outputDir, chunkFilename);
+      const chunkHash = createHash('sha256');
+      const writeStream = createWriteStream(chunkPath);
+      let chunkBytesWritten = 0;
+      const chunkTarget = Math.min(chunkSize, originalSize - filePosition);
 
-      const processData = async () => {
-        while (offset < data.length) {
-          const remainingInChunk = chunkSize - currentChunkBytesWritten;
-          const bytesToWrite = Math.min(remainingInChunk, data.length - offset);
-          const slice = data.subarray(offset, offset + bytesToWrite);
+      while (chunkBytesWritten < chunkTarget) {
+        const toRead = Math.min(READ_BUFFER_SIZE, chunkTarget - chunkBytesWritten);
+        const bytesRead = await readWithRetry(fd, readBuf, 0, toRead, filePosition);
 
-          // Feed into whole-file hash
-          fileHash.update(slice);
+        if (bytesRead === 0) break; // EOF
 
-          // Feed into current chunk hash
-          currentChunkHash.update(slice);
+        const slice = readBuf.subarray(0, bytesRead);
 
-          // Write to current chunk file (handle backpressure)
-          const canContinue = currentWriteStream.write(slice);
-          if (!canContinue) {
-            await new Promise<void>(resolve => currentWriteStream.once('drain', resolve));
-          }
+        fileHash.update(slice);
+        chunkHash.update(slice);
 
-          currentChunkBytesWritten += bytesToWrite;
-          globalBytesProcessed += bytesToWrite;
-          offset += bytesToWrite;
-
-          // Report progress
-          if (onProgress) {
-            onProgress({
-              totalBytes: originalSize,
-              processedBytes: globalBytesProcessed,
-              currentChunk: currentChunkIndex,
-              totalChunks,
-              percentage: Math.floor((globalBytesProcessed / originalSize) * 100)
-            });
-          }
-
-          // Current chunk is full — finalize it and start next
-          if (currentChunkBytesWritten >= chunkSize && globalBytesProcessed < originalSize) {
-            await finalizeCurrentChunk();
-            startNextChunk();
-          }
+        const canContinue = writeStream.write(slice);
+        if (!canContinue) {
+          await new Promise<void>(resolve => writeStream.once('drain', resolve));
         }
-      };
 
-      processData().then(() => callback()).catch(callback);
-    },
+        chunkBytesWritten += bytesRead;
+        filePosition += bytesRead;
 
-    flush(callback) {
-      // Finalize the last chunk (may have remaining data)
-      finalizeCurrentChunk()
-        .then(() => callback())
-        .catch(callback);
-    }
-  });
+        if (onProgress) {
+          onProgress({
+            totalBytes: originalSize,
+            processedBytes: filePosition,
+            currentChunk: chunkIdx,
+            totalChunks,
+            percentage: Math.floor((filePosition / originalSize) * 100)
+          });
+        }
+      }
 
-  async function finalizeCurrentChunk(): Promise<void> {
-    // Close the write stream
-    await new Promise<void>((resolve, reject) => {
-      currentWriteStream.end((err?: Error) => {
-        if (err) reject(err);
-        else resolve();
+      // Close chunk write stream
+      await new Promise<void>((resolve, reject) => {
+        writeStream.end((err?: Error) => {
+          if (err) reject(err);
+          else resolve();
+        });
       });
-    });
 
-    const chunkHash = currentChunkHash.digest('hex');
+      const hash = chunkHash.digest('hex');
+      manifest = addChunkToManifest(manifest, {
+        index: chunkIdx,
+        filename: chunkFilename,
+        size: chunkBytesWritten,
+        hash,
+        uploaded: false
+      });
+      chunkPaths.push(chunkPath);
 
-    manifest = addChunkToManifest(manifest, {
-      index: currentChunkIndex,
-      filename: currentChunkFilename,
-      size: currentChunkBytesWritten,
-      hash: chunkHash,
-      uploaded: false
-    });
-    chunkPaths.push(currentChunkPath);
-
-    logger.debug('Chunk written', {
-      chunk: currentChunkIndex,
-      size: currentChunkBytesWritten,
-      hash: chunkHash
-    });
+      logger.debug('Chunk written', { chunk: chunkIdx, size: chunkBytesWritten, hash });
+    }
+  } finally {
+    await fd.close();
   }
 
-  function startNextChunk(): void {
-    currentChunkIndex++;
-    currentChunkBytesWritten = 0;
-    currentChunkHash = createHash('sha256');
-    currentChunkFilename = getChunkFilename(manifest.fileId, currentChunkIndex);
-    currentChunkPath = join(outputDir, currentChunkFilename);
-    currentWriteStream = createWriteStream(currentChunkPath);
-  }
-
-  // Single-pass: read source file once, split + hash simultaneously
-  const readStream = createReadStream(inputPath, { highWaterMark: 1024 * 1024 });
-
-  await pipeline(readStream, splitter);
-
-  // Set the whole-file hash on the manifest
   manifest.originalHash = fileHash.digest('hex');
   logger.debug('Original file hash calculated', { hash: manifest.originalHash });
 
-  // Update manifest status
   manifest = updateManifestStatus(manifest, 'uploading');
 
-  // Save manifest
   const manifestPath = join(outputDir, `${manifest.fileId}.manifest.json`);
   await saveManifest(manifest, manifestPath);
 
@@ -222,10 +209,8 @@ export async function mergeChunks(
     outputPath
   });
 
-  // Sort chunks by index
   const sortedChunks = [...manifest.chunks].sort((a, b) => a.index - b.index);
 
-  // Verify all chunks exist
   for (const chunk of sortedChunks) {
     const chunkPath = join(chunksDir, chunk.filename);
     if (!existsSync(chunkPath)) {
@@ -234,11 +219,9 @@ export async function mergeChunks(
     }
   }
 
-  // Create output stream
   const writeStream = createWriteStream(outputPath);
   let processedBytes = 0;
 
-  // Write chunks sequentially
   for (const chunk of sortedChunks) {
     const chunkPath = join(chunksDir, chunk.filename);
 
@@ -267,7 +250,6 @@ export async function mergeChunks(
     logger.debug('Chunk merged', { index: chunk.index, filename: chunk.filename });
   }
 
-  // Close write stream
   await new Promise<void>((resolve, reject) => {
     writeStream.end((err?: Error) => {
       if (err) reject(err);
@@ -275,7 +257,6 @@ export async function mergeChunks(
     });
   });
 
-  // Verify final file hash
   const { verifyFile } = await import('./checksum-utils.js');
   const isValid = await verifyFile(outputPath, manifest.originalHash);
 
@@ -284,7 +265,6 @@ export async function mergeChunks(
       fileId: manifest.fileId,
       expectedHash: manifest.originalHash
     });
-    // Remove corrupted output
     await unlink(outputPath);
     return false;
   }
