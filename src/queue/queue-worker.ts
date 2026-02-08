@@ -1,5 +1,6 @@
 // src/queue/queue-worker.ts
 import { basename } from 'path';
+import { unlinkSync } from 'fs';
 import type { TelegramClient } from '../types/index.js';
 import { uploadStorageCommand } from '../commands/upload-storage-command.js';
 import {
@@ -60,6 +61,16 @@ export async function startWorker(
         completeJob(account, job.id);
         processed++;
         logger.info('Queue job completed', { jobId: job.id, file: basename(job.filePath) });
+
+        // Delete source file if requested
+        if (job.deleteSource) {
+          try {
+            unlinkSync(job.filePath);
+            logger.info('Deleted source file', { filePath: job.filePath });
+          } catch (err) {
+            logger.error('Failed to delete source file', { filePath: job.filePath, error: (err as Error).message });
+          }
+        }
       } else {
         failJob(account, job.id, 'Upload returned false');
         failed++;

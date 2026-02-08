@@ -5,11 +5,12 @@ import { readdir } from 'fs/promises';
 import { Command } from 'commander';
 import pLimit from 'p-limit';
 import { Uploader } from './Uploader.js';
-import { join, basename, resolve } from 'path';
+import { join, posix, basename, resolve } from 'path';
 import { homedir } from 'os';
 import config from './config.js';
 import logger from './logger.js';
 import { validatePath, validateChatId, validateAccountName, validateCommand, sanitizeInput, resolveCommandAlias, VALID_COMMANDS } from './utils/validation.js';
+import { walkDirectory } from './utils/directory-walker.js';
 import { createSession } from './session-helper.js';
 import { createProcessLock } from './utils/process-lock.js';
 import { AuthKeyDuplicatedError, handleError } from './utils/errors.js';
@@ -243,6 +244,7 @@ const main = async (): Promise<void> => {
 
     // Handle upload-storage: add to queue BEFORE lock
     let queuedJob: any = null;
+    let queuedJobIds: string[] = [];
     let uploadPath: string | undefined;
 
     if (filePath) {
@@ -260,32 +262,53 @@ const main = async (): Promise<void> => {
     }
 
     if (command === 'upload-storage' && uploadPath && options.virtualPath) {
-      // Validate file exists
+      // Validate path exists
       if (!existsSync(uploadPath)) {
         logger.error(`File not found: ${uploadPath}`);
         console.error(`❌ File not found: ${uploadPath}`);
         process.exit(1);
       }
 
-      // Reject directories (not yet supported for upload-storage)
-      if (statSync(uploadPath).isDirectory()) {
-        logger.error(`Path is a directory: ${uploadPath}`);
-        console.error(`❌ '${basename(uploadPath)}' is a directory. Directory uploads are not yet supported for storage.`);
-        console.error(`   Upload individual files instead.`);
-        process.exit(1);
-      }
-
-      // Add to queue
       const { addJob, getQueuePosition } = await import('./queue/queue-manager.js');
-      queuedJob = addJob(account, {
-        filePath: uploadPath,
-        virtualPath: options.virtualPath,
-        storageChannelId: options.storageChannel,
-        deleteSource
-      });
-      const position = getQueuePosition(account, queuedJob.id);
-      console.log(`\n✓ Added to upload queue (position: ${position})`);
-      logger.info('Job added to queue', { jobId: queuedJob.id, position });
+
+      if (statSync(uploadPath).isDirectory()) {
+        // Directory mode: walk, compute virtual paths, batch-queue
+        const entries = await walkDirectory(uploadPath);
+        if (entries.length === 0) {
+          console.error(`❌ No files found in directory: ${basename(uploadPath)}`);
+          process.exit(1);
+        }
+
+        const dirName = basename(uploadPath);
+        const jobIds: string[] = [];
+
+        for (const entry of entries) {
+          // Virtual path = base + dirname + relative path (posix-normalized)
+          const fileVirtualPath = posix.join(options.virtualPath, dirName, entry.relativePath.split('/').join('/'));
+          const job = addJob(account, {
+            filePath: entry.absolutePath,
+            virtualPath: fileVirtualPath,
+            storageChannelId: options.storageChannel,
+            deleteSource,
+          });
+          jobIds.push(job.id);
+        }
+
+        console.log(`\n✓ Queued ${entries.length} files from '${dirName}' for upload`);
+        logger.info('Directory queued', { dir: dirName, fileCount: entries.length });
+        queuedJobIds = jobIds;
+      } else {
+        // Single file mode
+        queuedJob = addJob(account, {
+          filePath: uploadPath,
+          virtualPath: options.virtualPath,
+          storageChannelId: options.storageChannel,
+          deleteSource
+        });
+        const position = getQueuePosition(account, queuedJob.id);
+        console.log(`\n✓ Added to upload queue (position: ${position})`);
+        logger.info('Job added to queue', { jobId: queuedJob.id, position });
+      }
     }
 
     // Create and acquire process lock
@@ -294,15 +317,17 @@ const main = async (): Promise<void> => {
     processLock.setupCleanup();
 
     if (!processLock.acquire()) {
-      // For upload-storage: job already queued, handle --wait or exit
-      if (command === 'upload-storage' && queuedJob) {
+      // For upload-storage: job(s) already queued, handle --wait or exit
+      const hasQueuedWork = queuedJob || queuedJobIds.length > 0;
+      if (command === 'upload-storage' && hasQueuedWork) {
         if (options.wait) {
           console.log('⏳ Waiting for upload to complete...\n');
-          logger.info('Waiting for job to complete', { jobId: queuedJob.id });
           const { pollJobStatusUntilDone } = await import('./queue/queue-process-utils.js');
           const { getJob } = await import('./queue/queue-manager.js');
-          const success = await pollJobStatusUntilDone(getJob, account, queuedJob.id, 1000);
-          process.exit(success ? 0 : 1);
+          const idsToWait = queuedJobIds.length > 0 ? queuedJobIds : [queuedJob.id];
+          const results = await Promise.all(idsToWait.map(id => pollJobStatusUntilDone(getJob, account, id, 1000)));
+          const allSuccess = results.every(Boolean);
+          process.exit(allSuccess ? 0 : 1);
         }
         console.log('✓ Worker is active. Upload queued and will be processed.\n');
         process.exit(0);
