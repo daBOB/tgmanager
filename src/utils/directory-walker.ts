@@ -1,6 +1,6 @@
 // src/utils/directory-walker.ts
 import { readdir } from 'fs/promises';
-import { join } from 'path';
+import { join, relative } from 'path';
 
 export interface DirectoryEntry {
   absolutePath: string;
@@ -21,10 +21,9 @@ export async function walkDirectory(dirPath: string): Promise<DirectoryEntry[]> 
   for (const entry of entries) {
     if (!entry.isFile()) continue;
 
-    // Build relative path from parentPath (relative to dirPath in recursive mode) + name
-    const relativePath = entry.parentPath
-      ? join(entry.parentPath, entry.name)
-      : entry.name;
+    // parentPath is absolute in Node's recursive readdir — make it relative to dirPath
+    const relParent = entry.parentPath ? relative(dirPath, entry.parentPath) : '';
+    const relativePath = relParent ? join(relParent, entry.name) : entry.name;
 
     // Skip if any path segment starts with '.'
     const segments = relativePath.split('/');
