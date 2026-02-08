@@ -269,6 +269,20 @@ const main = async (): Promise<void> => {
         process.exit(1);
       }
 
+      // Fetch existing storage files for duplicate detection (unless --force)
+      let existingFiles: import('./storage/storage-service.js').StoredFileInfo[] = [];
+      if (!options.force) {
+        try {
+          const dedupClient = await startClient(account);
+          const { StorageService } = await import('./storage/storage-service.js');
+          const storageService = new StorageService(dedupClient, { storageChannelId: options.storageChannel });
+          existingFiles = await storageService.listStoredFiles();
+          await dedupClient.disconnect();
+        } catch (err) {
+          logger.warn('Failed to check for duplicates, proceeding without dedup', { error: (err as Error).message });
+        }
+      }
+
       const { addJob, getQueuePosition } = await import('./queue/queue-manager.js');
 
       if (statSync(uploadPath).isDirectory()) {
@@ -281,10 +295,18 @@ const main = async (): Promise<void> => {
 
         const dirName = basename(uploadPath);
         const jobIds: string[] = [];
+        let skippedCount = 0;
 
         for (const entry of entries) {
           // Virtual path = base + dirname + relative path (posix-normalized)
           const fileVirtualPath = posix.join(options.virtualPath, dirName, entry.relativePath.split('/').join('/'));
+
+          // Check for path duplicate in storage
+          if (existingFiles.length > 0 && existingFiles.some(f => f.virtualPath === fileVirtualPath)) {
+            skippedCount++;
+            continue;
+          }
+
           const job = addJob(account, {
             filePath: entry.absolutePath,
             virtualPath: fileVirtualPath,
@@ -294,11 +316,25 @@ const main = async (): Promise<void> => {
           jobIds.push(job.id);
         }
 
-        console.log(`\n✓ Queued ${entries.length} files from '${dirName}' for upload`);
-        logger.info('Directory queued', { dir: dirName, fileCount: entries.length });
+        if (jobIds.length > 0) {
+          console.log(`\n✓ Queued ${jobIds.length} files from '${dirName}' for upload`);
+        }
+        if (skippedCount > 0) {
+          console.log(`⏭  Skipped ${skippedCount} file(s) already in storage`);
+        }
+        if (jobIds.length === 0 && skippedCount > 0) {
+          console.log(`\nAll ${skippedCount} files already in storage. Nothing to queue.`);
+          process.exit(0);
+        }
+        logger.info('Directory queued', { dir: dirName, queued: jobIds.length, skipped: skippedCount });
         queuedJobIds = jobIds;
       } else {
-        // Single file mode
+        // Single file mode — check path duplicate
+        if (existingFiles.length > 0 && existingFiles.some(f => f.virtualPath === options.virtualPath)) {
+          console.log(`⏭  Skipped: "${options.virtualPath}" already exists in storage. Use --force to re-upload.`);
+          process.exit(0);
+        }
+
         queuedJob = addJob(account, {
           filePath: uploadPath,
           virtualPath: options.virtualPath,

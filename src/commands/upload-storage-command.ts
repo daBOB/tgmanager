@@ -26,6 +26,7 @@ export interface UploadStorageOptions {
   virtualPath: string;
   storageChannelId?: string;
   deleteSource?: boolean;
+  force?: boolean;
 }
 
 /**
@@ -106,8 +107,19 @@ async function uploadWithSplitting(
       }
     });
     manifest = result.manifest;
-
     splitBar.stop();
+
+    // Check for duplicate content in storage
+    if (!options.force) {
+      const existing = await storage.findByHash(manifest.originalHash);
+      if (existing) {
+        console.log(`\n⏭  Skipped: identical content already in storage at "${existing.virtualPath}"`);
+        logger.info('Duplicate upload skipped (hash match)', { hash: manifest.originalHash, existingPath: existing.virtualPath });
+        await cleanupChunks(manifest, tempDir);
+        return true;
+      }
+    }
+
     console.log(`\nCreated ${manifest.totalChunks} chunks\n`);
 
     // Progress bar for uploading
@@ -194,6 +206,17 @@ async function uploadDirect(
   try {
     // Calculate file hash
     const { hash } = await hashFile(filePath);
+
+    // Check for duplicate content in storage
+    if (!options.force) {
+      const existing = await storage.findByHash(hash);
+      if (existing) {
+        progressBar.stop();
+        console.log(`\n⏭  Skipped: identical content already in storage at "${existing.virtualPath}"`);
+        logger.info('Duplicate upload skipped (hash match)', { hash, existingPath: existing.virtualPath });
+        return true;
+      }
+    }
 
     // Create single-chunk manifest
     const manifest = createManifest(fileName, virtualPath, fileSize, hash, fileSize);

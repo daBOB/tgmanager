@@ -17,6 +17,7 @@ export interface StoredFileInfo {
   originalName: string;
   virtualPath: string;
   size: number;
+  originalHash: string;
   status: FileManifest['status'];
   createdAt: string;
   manifestMessageId: number;
@@ -348,8 +349,6 @@ export class StorageService {
     }
 
     return this.parseManifestFromMessage(message);
-
-    return null;
   }
 
   /**
@@ -382,6 +381,7 @@ export class StorageService {
           originalName: manifest.originalName,
           virtualPath: fullPath,
           size: manifest.originalSize,
+          originalHash: manifest.originalHash,
           status: manifest.status,
           createdAt: manifest.createdAt,
           manifestMessageId: message.id
@@ -406,6 +406,14 @@ export class StorageService {
   async findByPath(virtualPath: string): Promise<StoredFileInfo | null> {
     const allFiles = await this.listStoredFiles();
     return allFiles.find(f => f.virtualPath === virtualPath) || null;
+  }
+
+  /**
+   * Find file by content hash (SHA-256). Returns first match or null.
+   */
+  async findByHash(hash: string): Promise<StoredFileInfo | null> {
+    const allFiles = await this.listStoredFiles();
+    return allFiles.find(f => f.originalHash === hash) || null;
   }
 
   /**
