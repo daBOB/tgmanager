@@ -276,6 +276,7 @@ const main = async (): Promise<void> => {
           const dedupClient = await startClient(account);
           const { StorageService } = await import('./storage/storage-service.js');
           const storageService = new StorageService(dedupClient, { storageChannelId: options.storageChannel });
+          await storageService.initializeStorageChannel();
           existingFiles = await storageService.listStoredFiles();
           await dedupClient.disconnect();
         } catch (err) {

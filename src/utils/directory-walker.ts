@@ -1,6 +1,7 @@
 // src/utils/directory-walker.ts
 import { readdir } from 'fs/promises';
-import { join, relative } from 'path';
+import { join } from 'path';
+import { statSync } from 'fs';
 
 export interface DirectoryEntry {
   absolutePath: string;
@@ -9,30 +10,28 @@ export interface DirectoryEntry {
 
 /**
  * Recursively walk a directory and return all files (skipping hidden entries).
- * Uses Node 22 recursive readdir — no external dependencies.
+ * Uses readdir({ recursive: true }) without withFileTypes for Node 18 compat
+ * (Dirent.parentPath only exists in Node 20.12+, but binary targets Node 18).
  * @param dirPath - Absolute path to directory
  * @returns Array of file entries sorted by relative path
  */
 export async function walkDirectory(dirPath: string): Promise<DirectoryEntry[]> {
-  const entries = await readdir(dirPath, { withFileTypes: true, recursive: true });
+  // Returns string[] of relative paths (files + dirs) when recursive + no withFileTypes
+  const allPaths = await readdir(dirPath, { recursive: true }) as string[];
 
   const files: DirectoryEntry[] = [];
 
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-
-    // parentPath is absolute in Node's recursive readdir — make it relative to dirPath
-    const relParent = entry.parentPath ? relative(dirPath, entry.parentPath) : '';
-    const relativePath = relParent ? join(relParent, entry.name) : entry.name;
-
+  for (const relativePath of allPaths) {
     // Skip if any path segment starts with '.'
     const segments = relativePath.split('/');
     if (segments.some(seg => seg.startsWith('.'))) continue;
 
-    files.push({
-      absolutePath: join(dirPath, relativePath),
-      relativePath,
-    });
+    const absolutePath = join(dirPath, relativePath);
+
+    // Only include files (not directories)
+    if (!statSync(absolutePath).isFile()) continue;
+
+    files.push({ absolutePath, relativePath });
   }
 
   // Sort for deterministic queue ordering
