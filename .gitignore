@@ -33,7 +33,12 @@ lerna-debug.log*
 # Build output
 dist/
 dist-cjs/
+dist-pkg/
 build/
+
+# Large binary/media files
+*.mp4
+uploader-linux
 
 # OS files
 .DS_Store
