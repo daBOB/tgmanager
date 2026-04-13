@@ -37,22 +37,26 @@ describe('file-splitter', () => {
   });
 
   describe('needsSplitting', () => {
-    it('should return true for files exceeding 2GB (regular)', () => {
-      const size2_5GB = 2.5 * 1024 * 1024 * 1024;
-      expect(needsSplitting(size2_5GB, false)).toBe(true);
-    });
-
-    it('should return false for files under 2GB (regular)', () => {
+    // Universal ~3.7 GB threshold (DEFAULT_CHUNK_SIZE): Telegram rejects files near
+    // the 4 GB API limit even for premium accounts, so account type does not matter.
+    it('should return false for files well under the chunk size (regular)', () => {
       const size1GB = 1 * 1024 * 1024 * 1024;
       expect(needsSplitting(size1GB, false)).toBe(false);
     });
 
-    it('should use 4GB limit for premium', () => {
-      const size3GB = 3 * 1024 * 1024 * 1024;
-      expect(needsSplitting(size3GB, true)).toBe(false);
+    it('should return true for files exceeding the chunk size (regular)', () => {
+      const size5GB = 5 * 1024 * 1024 * 1024;
+      expect(needsSplitting(size5GB, false)).toBe(true);
+    });
 
+    it('should return true for files exceeding the chunk size (premium)', () => {
       const size5GB = 5 * 1024 * 1024 * 1024;
       expect(needsSplitting(size5GB, true)).toBe(true);
+    });
+
+    it('should return false for files under the chunk size (premium)', () => {
+      const size3GB = 3 * 1024 * 1024 * 1024;
+      expect(needsSplitting(size3GB, true)).toBe(false);
     });
   });
 

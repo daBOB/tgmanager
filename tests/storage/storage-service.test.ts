@@ -162,7 +162,7 @@ describe('StorageService', () => {
         fileId: 'find-test',
         version: 1,
         originalName: 'findme.bin',
-        originalPath: '/specific/path/findme.bin',
+        originalPath: '/specific/path',
         originalSize: 1024,
         originalHash: 'hash',
         chunkSize: 1024,
