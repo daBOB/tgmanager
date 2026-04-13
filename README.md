@@ -317,7 +317,7 @@ The compiled executables support multiple configuration methods:
 2. **System environment variables**
 3. **Custom config path** via `TGMANAGER_CONFIG`
 
-See [STANDALONE.md](STANDALONE.md) for detailed instructions on using standalone executables with credentials.
+See [docs/standalone.md](docs/standalone.md) for detailed instructions on using standalone executables with credentials.
 
 ## Docker Support
 

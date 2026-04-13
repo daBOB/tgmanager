@@ -10,12 +10,13 @@ node_modules/
 .env.test.local
 .env.production.local
 
-# Sensitive data
-accounts.js
-
 # Session data (now in project directory)
 sessions/
 /sessions/
+
+# Process lock files
+locks/
+/locks/
 
 # Upload directory (now in project directory)
 uploads/
@@ -32,7 +33,6 @@ lerna-debug.log*
 
 # Build output
 dist/
-dist-cjs/
 dist-pkg/
 build/
 
@@ -51,10 +51,10 @@ Thumbs.db
 *.swo
 *~
 
-# Lock files (keep package-lock.json)
+# Lock files — canonical PM is Bun; ignore others
 yarn.lock
 pnpm-lock.yaml
-bun.lockb
+package-lock.json
 
 # Temporary files
 tmp/
@@ -69,5 +69,3 @@ coverage/
 # Debug
 .node_repl_history
 
-# Keep these
-!package-lock.json

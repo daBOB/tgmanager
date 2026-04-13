@@ -37,9 +37,8 @@ Implemented comprehensive protection against the `AUTH_KEY_DUPLICATED` error tha
 - Easy to use: `./upload-safe.sh -a account -c upload -i @channel -f file.jpg`
 
 #### 5. Documentation
-- `AUTH_KEY_DUPLICATED_FIX.md` - Comprehensive guide
-- `QUICK_FIX_AUTH_KEY.md` - Quick reference for immediate fixes
-- `CHANGELOG_AUTH_FIX.md` - This file
+- `docs/troubleshooting-auth-key-duplicated.md` - Comprehensive guide
+- `docs/changelog.md` - This file
 
 ### Features
 
@@ -141,9 +140,8 @@ No migration needed! The changes are backward compatible:
 
 1. `src/utils/process-lock.ts` - Process locking implementation
 2. `upload-safe.sh` - Safe wrapper script
-3. `AUTH_KEY_DUPLICATED_FIX.md` - Comprehensive documentation
-4. `QUICK_FIX_AUTH_KEY.md` - Quick reference guide
-5. `CHANGELOG_AUTH_FIX.md` - This changelog
+3. `docs/troubleshooting-auth-key-duplicated.md` - Comprehensive documentation
+4. `docs/changelog.md` - This changelog
 
 ### Breaking Changes
 
