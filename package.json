@@ -1,5 +1,6 @@
 {
   "name": "uploader",
+  "version": "2.9.0",
   "main": "dist/index.js",
   "bin": "dist/index.js",
   "type": "module",
