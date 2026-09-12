@@ -1,7 +1,9 @@
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Config, AccountConfig } from './types/index.js';
-import { loadConfig, getConfigDirectory } from './config-loader.js';
+import { loadConfig } from './config-loader.js';
+import { getConfigDirectory } from './utils/runtime-paths.js';
+import { printError } from './utils/console-output.js';
 
 // Load environment variables from appropriate location
 loadConfig();
@@ -57,7 +59,7 @@ const buildAccounts = (): Record<string, AccountConfig> => {
       accounts[name] = getAccountConfig(name);
     } catch (error) {
       // Account not configured, skip it
-      console.warn(`Warning: ${(error as Error).message}`);
+      printError(`Warning: ${(error as Error).message}`);
     }
   }
 

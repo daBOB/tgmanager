@@ -84,6 +84,25 @@ export class AuthKeyDuplicatedError extends Error {
   }
 }
 
+/** Telegram's code for "this auth key is in use somewhere else". */
+const AUTH_KEY_DUPLICATED_CODE = 406;
+
+/**
+ * Recognise an AUTH_KEY_DUPLICATED failure from any of the shapes it arrives in:
+ * our own error class, a raw API error carrying code 406, or a plain Error whose
+ * message embeds the code name.
+ */
+export function isAuthKeyDuplicatedError(error: unknown): boolean {
+  if (error instanceof AuthKeyDuplicatedError) return true;
+  if (!error || typeof error !== 'object') return false;
+
+  const candidate = error as { code?: number; message?: string };
+  return (
+    candidate.code === AUTH_KEY_DUPLICATED_CODE ||
+    candidate.message?.includes('AUTH_KEY_DUPLICATED') === true
+  );
+}
+
 interface ErrorContext {
   [key: string]: unknown;
 }

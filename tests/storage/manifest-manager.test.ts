@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import { makeTempDir } from '../helpers/test-fixtures.js';
 import {
   createManifest,
   addChunkToManifest,
@@ -15,7 +16,7 @@ import {
   DEFAULT_CHUNK_SIZE
 } from '../../src/storage/manifest-manager.js';
 
-const TEST_DIR = join(process.cwd(), 'tests', '.temp', 'manifests');
+const TEST_DIR = makeTempDir('manifests');
 
 describe('manifest-manager', () => {
   beforeAll(async () => {

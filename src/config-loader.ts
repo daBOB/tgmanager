@@ -1,32 +1,9 @@
 import { config as dotenvConfig } from 'dotenv';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { homedir } from 'os';
-import { fileURLToPath } from 'url';
 import logger from './logger.js';
-
-// Determine if running as compiled executable
-const isExecutable = process.pkg !== undefined;
-
-// Get appropriate base directory
-const getBaseDirectory = (): string => {
-  if (isExecutable) {
-    // For executables, use the directory containing the executable
-    return dirname(process.execPath);
-  } else {
-    // For source code, use project root
-    // Handle both ESM and CJS
-    if (typeof __dirname !== 'undefined') {
-      // CommonJS
-      return dirname(__dirname);
-    } else {
-      // ES modules
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = dirname(__filename);
-      return dirname(__dirname);
-    }
-  }
-};
+import { getBaseDirectory } from './utils/runtime-paths.js';
 
 // Load environment configuration
 export const loadConfig = (): void => {
@@ -79,31 +56,3 @@ export const loadConfig = (): void => {
     }
   }
 };
-
-// Helper to get config directory for sessions and uploads
-export const getConfigDirectory = (): string => {
-  // Check for user-specified config directory
-  if (process.env.TGMANAGER_HOME) {
-    return process.env.TGMANAGER_HOME;
-  }
-  
-  if (isExecutable) {
-    // For executables, use home directory by default
-    return join(homedir(), '.tgmanager');
-  } else {
-    // For development, use project directory
-    // Handle both ESM and CJS
-    if (typeof __dirname !== 'undefined') {
-      // CommonJS
-      return dirname(__dirname);
-    } else {
-      // ES modules
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = dirname(__filename);
-      return dirname(__dirname);
-    }
-  }
-};
-
-// Export helpers
-export { isExecutable, getBaseDirectory };

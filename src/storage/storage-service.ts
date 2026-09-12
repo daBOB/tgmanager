@@ -4,14 +4,14 @@
 
 import type { TelegramClient } from '../types/index.js';
 import type { FileManifest } from './manifest-manager.js';
+import type { StorageServiceConfig } from './storage-channel-manager.js';
 import {
-  StorageServiceConfig,
   DEFAULT_CONFIG,
   initializeStorageChannel,
   requireChannelId
 } from './storage-channel-manager.js';
+import type { UploadProgress } from './storage-file-uploader.js';
 import {
-  UploadProgress,
   uploadChunk,
   uploadAllChunks,
   uploadManifest
@@ -21,13 +21,8 @@ import {
   getManifestFromMessage,
   deleteStoredFile
 } from './storage-file-downloader.js';
-import {
-  StoredFileInfo,
-  listStoredFiles,
-  listByPath,
-  findByPath,
-  findByHash
-} from './storage-file-finder.js';
+import type { StoredFileInfo } from './storage-file-finder.js';
+import { StorageIndex } from './storage-file-finder.js';
 
 export type { StoredFileInfo, UploadProgress, StorageServiceConfig };
 
@@ -36,6 +31,8 @@ export class StorageService {
   private client: TelegramClient;
   private storageChannelId: string | null = null;
   private config: Required<StorageServiceConfig>;
+  /** Lazily built so one service instance walks the channel history at most once. */
+  private index: StorageIndex | null = null;
 
   constructor(client: TelegramClient, serviceConfig: StorageServiceConfig = {}) {
     this.client = client;
@@ -80,7 +77,11 @@ export class StorageService {
   }
 
   async uploadManifest(manifest: FileManifest): Promise<number> {
-    return uploadManifest(this.client, this.getStorageChannelId(), manifest);
+    const messageId = await uploadManifest(this.client, this.getStorageChannelId(), manifest);
+    // Keep an already-built index current so a later lookup in the same run
+    // sees this file without re-reading the whole channel.
+    this.getIndex().add(manifest, messageId);
+    return messageId;
   }
 
   async downloadChunk(
@@ -98,24 +99,33 @@ export class StorageService {
     return getManifestFromMessage(this.client, this.getStorageChannelId(), messageId);
   }
 
+  /** Index over the storage channel, shared by every lookup on this instance. */
+  private getIndex(): StorageIndex {
+    this.index ??= new StorageIndex(this.client, this.getStorageChannelId());
+    return this.index;
+  }
+
   async listStoredFiles(): Promise<StoredFileInfo[]> {
-    return listStoredFiles(this.client, this.getStorageChannelId());
+    return this.getIndex().all();
   }
 
   async listByPath(pathPrefix: string): Promise<StoredFileInfo[]> {
-    return listByPath(this.client, this.getStorageChannelId(), pathPrefix);
+    return this.getIndex().listByPath(pathPrefix);
   }
 
   async findByPath(virtualPath: string): Promise<StoredFileInfo | null> {
-    return findByPath(this.client, this.getStorageChannelId(), virtualPath);
+    return this.getIndex().findByPath(virtualPath);
   }
 
   async findByHash(hash: string): Promise<StoredFileInfo | null> {
-    return findByHash(this.client, this.getStorageChannelId(), hash);
+    return this.getIndex().findByHash(hash);
   }
 
   async deleteStoredFile(manifestMessageId: number): Promise<boolean> {
-    return deleteStoredFile(this.client, this.getStorageChannelId(), manifestMessageId);
+    const deleted = await deleteStoredFile(this.client, this.getStorageChannelId(), manifestMessageId);
+    // The cached listing still contains the removed file.
+    if (deleted) this.getIndex().invalidate();
+    return deleted;
   }
 }
 

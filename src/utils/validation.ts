@@ -1,6 +1,4 @@
 import { resolve } from 'path';
-import { statSync } from 'fs';
-import type { Stats } from 'fs';
 import type { CommandOptions } from '../types/index.js';
 
 /**
@@ -68,24 +66,6 @@ export function validateAccountName(accountName: string, availableAccounts: stri
   }
 
   return accountName;
-}
-
-/**
- * Validates file exists and is accessible
- */
-export function validateFileExists(filePath: string): Stats {
-  try {
-    const stats = statSync(filePath);
-    return stats;
-  } catch (error: any) {
-    if (error.code === 'ENOENT') {
-      throw new Error(`File not found: ${filePath}`);
-    }
-    if (error.code === 'EACCES') {
-      throw new Error(`Permission denied: ${filePath}`);
-    }
-    throw new Error(`Error accessing file: ${error.message}`);
-  }
 }
 
 /** Canonical command names accepted by the CLI */
@@ -162,8 +142,10 @@ export function sanitizeInput<T>(input: T): T {
     return input;
   }
   
-  // Remove control characters and trim
+  // Remove control characters and trim. The control-char class is the whole
+  // point of this sanitizer, so the lint rule guarding against it is inverted here.
   return input
-    .replace(/[\x00-\x1F\x7F]/g, '') // Remove control characters
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1F\x7F]/g, '')
     .trim() as T;
 }

@@ -3,6 +3,7 @@ import { basename } from 'path';
 import { unlinkSync } from 'fs';
 import type { TelegramClient } from '../types/index.js';
 import { uploadStorageCommand } from '../commands/upload-storage-command.js';
+import { StorageService } from '../storage/storage-service.js';
 import {
   getNextPendingJob,
   claimJob,
@@ -13,6 +14,7 @@ import {
   listJobs
 } from './queue-manager.js';
 import logger from '../logger.js';
+import { print } from '../utils/console-output.js';
 
 /**
  * Start queue worker: recover stale jobs, drain queue FIFO, exit when empty.
@@ -29,7 +31,7 @@ export async function startWorker(
   // Recover any jobs left in "processing" from a crashed worker
   const recovered = recoverStaleJobs(account);
   if (recovered > 0) {
-    console.log(`Recovered ${recovered} stale job(s) from previous run`);
+    print(`Recovered ${recovered} stale job(s) from previous run`);
   }
 
   // Cleanup old completed/failed/cancelled jobs (>24h)
@@ -37,6 +39,21 @@ export async function startWorker(
 
   let processed = 0;
   let failed = 0;
+
+  // One storage service for the whole drain: its channel index is cached, so
+  // the history is walked once rather than once per job. Jobs that name a
+  // different storage channel fall back to their own service.
+  const sharedStorage = new Map<string, StorageService>();
+  const storageFor = async (storageChannelId?: string): Promise<StorageService> => {
+    const key = storageChannelId ?? '';
+    let storage = sharedStorage.get(key);
+    if (!storage) {
+      storage = new StorageService(client, { storageChannelId });
+      await storage.initializeStorageChannel();
+      sharedStorage.set(key, storage);
+    }
+    return storage;
+  };
 
   // Drain queue FIFO
   while (true) {
@@ -47,15 +64,18 @@ export async function startWorker(
     if (!job) continue; // Race condition: another process claimed it
 
     const pending = listJobs(account).filter(j => j.status === 'pending').length;
-    console.log(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);
+    print(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);
 
     try {
-      const success = await uploadStorageCommand(client, {
-        filePath: job.filePath,
-        virtualPath: job.virtualPath,
-        storageChannelId: job.storageChannelId,
-        deleteSource: job.deleteSource
-      });
+      const success = await uploadStorageCommand(
+        client,
+        {
+          filePath: job.filePath,
+          virtualPath: job.virtualPath,
+          storageChannelId: job.storageChannelId
+        },
+        await storageFor(job.storageChannelId)
+      );
 
       if (success) {
         completeJob(account, job.id);
@@ -84,18 +104,8 @@ export async function startWorker(
   }
 
   if (processed > 0 || failed > 0) {
-    console.log(`\nQueue complete: ${processed} succeeded, ${failed} failed`);
+    print(`\nQueue complete: ${processed} succeeded, ${failed} failed`);
   }
 
   return { processed, failed };
-}
-
-/**
- * Check if account queue has pending or processing work
- * @param account - Account identifier
- * @returns true if queue has work, false otherwise
- */
-export function hasQueuedWork(account: string): boolean {
-  const jobs = listJobs(account);
-  return jobs.some(j => j.status === 'pending' || j.status === 'processing');
 }

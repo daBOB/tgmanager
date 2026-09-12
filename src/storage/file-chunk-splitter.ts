@@ -3,10 +3,11 @@
 // whole-file SHA-256 in a single pass.
 import { createWriteStream, existsSync } from 'fs';
 import { mkdir, stat, open } from 'fs/promises';
+import type { FileHandle } from 'fs/promises';
 import { join, basename } from 'path';
 import { createHash } from 'crypto';
+import type { FileManifest } from './manifest-manager.js';
 import {
-  FileManifest,
   createManifest,
   addChunkToManifest,
   updateManifestStatus,
@@ -14,6 +15,7 @@ import {
   DEFAULT_CHUNK_SIZE
 } from './manifest-manager.js';
 import logger from '../logger.js';
+import { closeWriteStream } from './file-split-utils.js';
 
 export interface SplitOptions {
   chunkSize?: number;
@@ -46,7 +48,7 @@ export function getChunkFilename(fileId: string, index: number): string {
 // Read exactly `length` bytes from fd at `position` with retry on transient I/O errors.
 // Returns the number of bytes actually read (may be less at EOF).
 async function readWithRetry(
-  fd: import('fs/promises').FileHandle,
+  fd: FileHandle,
   buffer: Buffer,
   offset: number,
   length: number,
@@ -145,12 +147,7 @@ export async function splitFile(
         }
       }
 
-      await new Promise<void>((resolve, reject) => {
-        writeStream.end((err?: Error) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+      await closeWriteStream(writeStream);
 
       const hash = chunkHash.digest('hex');
       manifest = addChunkToManifest(manifest, {

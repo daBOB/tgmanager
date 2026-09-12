@@ -1,12 +1,13 @@
 // src/commands/upload-storage-direct-uploader.ts
 // Handles uploading small files directly as a single chunk (no splitting required)
 import { basename } from 'path';
-import { StorageService } from '../storage/storage-service.js';
+import type { StorageService } from '../storage/storage-service.js';
 import { createManifest } from '../storage/manifest-manager.js';
 import { hashFile } from '../storage/checksum-utils.js';
 import logger from '../logger.js';
 import type { UploadStorageOptions } from './upload-storage-types.js';
 import { createDirectUploadProgressBar } from './upload-storage-progress-reporter.js';
+import { print, printError } from '../utils/console-output.js';
 
 /** Upload file as a single chunk with a single-entry manifest */
 export async function uploadDirect(
@@ -28,7 +29,7 @@ export async function uploadDirect(
       const existing = await storage.findByHash(hash);
       if (existing) {
         progressBar.stop();
-        console.log(`\n⏭  Skipped: identical content already in storage at "${existing.virtualPath}"`);
+        print(`\n⏭  Skipped: identical content already in storage at "${existing.virtualPath}"`);
         logger.info('Duplicate upload skipped (hash match)', { hash, existingPath: existing.virtualPath });
         return true;
       }
@@ -61,15 +62,15 @@ export async function uploadDirect(
 
     await storage.uploadManifest(manifest);
 
-    console.log(`\n✓ Upload complete: ${fileName}`);
-    console.log(`  Virtual path: ${virtualPath}`);
-    console.log(`  File ID: ${manifest.fileId}`);
+    print(`\n✓ Upload complete: ${fileName}`);
+    print(`  Virtual path: ${virtualPath}`);
+    print(`  File ID: ${manifest.fileId}`);
 
     return true;
   } catch (error) {
     progressBar.stop();
     logger.error('Direct upload failed', { error: (error as Error).message });
-    console.error(`\n✗ Upload failed: ${(error as Error).message}`);
+    printError(`\n✗ Upload failed: ${(error as Error).message}`);
     return false;
   }
 }

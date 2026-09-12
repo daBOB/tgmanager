@@ -1,143 +1,33 @@
+// Lazily loads the optional native `sharp` dependency.
+//
+// Image resizing is a nice-to-have: if the native binding is missing for the
+// running platform (or stripped from a compiled single-file binary), the CLI
+// must still upload files. Callers therefore always handle a `null` result.
+// The load is attempted once and the outcome cached, including failure.
+import type { Sharp } from 'sharp';
 import logger from '../logger.js';
 
-let sharpInstance: any = null;
-let sharpLoadAttempted = false;
-let sharpAvailable = false;
+/** The `sharp()` entry point: takes an image path or buffer, returns a pipeline. */
+export type SharpFactory = (input?: string | Buffer) => Sharp;
 
-/**
- * Attempts to load sharp with multiple fallback strategies
- */
-async function loadSharp(): Promise<any> {
-  if (sharpLoadAttempted) {
-    return sharpAvailable ? sharpInstance : null;
-  }
+let cached: SharpFactory | null = null;
+let attempted = false;
 
-  sharpLoadAttempted = true;
+/** Returns the sharp factory, or null when the native module is unavailable. */
+export async function getSharp(): Promise<SharpFactory | null> {
+  if (attempted) return cached;
+  attempted = true;
 
-  // Strategy 1: Try dynamic import (works in most environments)
   try {
     const sharpModule = await import('sharp');
-    // Handle different module export patterns
-    let sharp: any = sharpModule.default || sharpModule;
-
-    // If it's still not a function, try accessing the sharp property
-    if (typeof sharp !== 'function' && sharp && sharp.sharp && typeof sharp.sharp === 'function') {
-      sharp = sharp.sharp;
-    }
-
-    // Validate that we have a function
-    if (typeof sharp !== 'function') {
-      logger.debug('Sharp module loaded but not a function', {
-        type: typeof sharp,
-        keys: Object.keys(sharp || {})
-      });
-      throw new Error('Sharp is not a function');
-    }
-
-    sharpInstance = sharp;
-    sharpAvailable = true;
-    logger.debug('Sharp loaded successfully via dynamic import');
-    return sharpInstance;
-  } catch (error: any) {
-    logger.debug('Failed to load sharp via dynamic import', { error: error.message });
+    cached = (sharpModule.default ?? sharpModule);
+    logger.debug('Sharp loaded');
+  } catch (error) {
+    logger.warn('Sharp unavailable — image resizing disabled for this run', {
+      error: (error as Error).message,
+    });
+    cached = null;
   }
 
-  // Strategy 2: Try require (fallback for CommonJS environments)
-  try {
-    let sharp: any = require('sharp');
-
-    // Handle different module export patterns
-    if (typeof sharp !== 'function' && sharp && sharp.default && typeof sharp.default === 'function') {
-      sharp = sharp.default;
-    }
-
-    // If it's still not a function, try accessing the sharp property
-    if (typeof sharp !== 'function' && sharp && sharp.sharp && typeof sharp.sharp === 'function') {
-      sharp = sharp.sharp;
-    }
-
-    // Validate that we have a function
-    if (typeof sharp !== 'function') {
-      logger.debug('Sharp module loaded via require but not a function', {
-        type: typeof sharp,
-        keys: Object.keys(sharp || {})
-      });
-      throw new Error('Sharp is not a function');
-    }
-
-    sharpInstance = sharp;
-    sharpAvailable = true;
-    logger.debug('Sharp loaded successfully via require');
-    return sharpInstance;
-  } catch (error: any) {
-    logger.debug('Failed to load sharp via require', { error: error.message });
-  }
-
-  // Strategy 3: Try loading from different paths (for pkg environments)
-  const possiblePaths = [
-    'sharp',
-    './node_modules/sharp',
-    '../node_modules/sharp',
-    '../../node_modules/sharp',
-  ];
-
-  for (const path of possiblePaths) {
-    try {
-      let sharp: any = require(path);
-
-      // Handle different module export patterns
-      if (typeof sharp !== 'function' && sharp && sharp.default && typeof sharp.default === 'function') {
-        sharp = sharp.default;
-      }
-
-      // If it's still not a function, try accessing the sharp property
-      if (typeof sharp !== 'function' && sharp && sharp.sharp && typeof sharp.sharp === 'function') {
-        sharp = sharp.sharp;
-      }
-
-      // Validate that we have a function
-      if (typeof sharp !== 'function') {
-        logger.debug('Sharp module loaded from path but not a function', {
-          path,
-          type: typeof sharp,
-          keys: Object.keys(sharp || {})
-        });
-        continue; // Try next path
-      }
-
-      sharpInstance = sharp;
-      sharpAvailable = true;
-      logger.debug('Sharp loaded successfully from path', { path });
-      return sharpInstance;
-    } catch (error: any) {
-      logger.debug('Failed to load sharp from path', { path, error: error.message });
-    }
-  }
-
-  logger.warn('Sharp could not be loaded. Image processing will be disabled.');
-  sharpAvailable = false;
-  return null;
-}
-
-/**
- * Gets the sharp instance, loading it if necessary
- */
-export async function getSharp(): Promise<any> {
-  return await loadSharp();
-}
-
-/**
- * Checks if sharp is available
- */
-export function isSharpAvailable(): boolean {
-  return sharpAvailable;
-}
-
-/**
- * Resets the sharp loading state (useful for testing)
- */
-export function resetSharpLoader(): void {
-  sharpInstance = null;
-  sharpLoadAttempted = false;
-  sharpAvailable = false;
+  return cached;
 }

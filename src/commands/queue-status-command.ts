@@ -2,6 +2,7 @@
 import { basename } from 'path';
 import { listJobs } from '../queue/queue-manager.js';
 import type { QueueJob, QueueJobStatus } from '../queue/queue-types.js';
+import { print } from '../utils/console-output.js';
 
 /**
  * Display formatted queue status for an account.
@@ -13,12 +14,12 @@ export async function queueStatusCommand(account: string): Promise<boolean> {
   const jobs = listJobs(account);
 
   if (jobs.length === 0) {
-    console.log(`No jobs in queue for account: ${account}`);
+    print(`No jobs in queue for account: ${account}`);
     return true;
   }
 
   // Print header
-  console.log(`\nUpload Queue (account: ${account})\n`);
+  print(`\nUpload Queue (account: ${account})\n`);
 
   // Column headers
   const headers = {
@@ -29,7 +30,7 @@ export async function queueStatusCommand(account: string): Promise<boolean> {
     created: 'Created',
   };
 
-  console.log(
+  print(
     `${headers.num}${headers.id}${headers.file}${headers.status}${headers.created}`
   );
 
@@ -41,7 +42,7 @@ export async function queueStatusCommand(account: string): Promise<boolean> {
     const status = job.status.padEnd(12);
     const created = formatRelativeTime(job.createdAt);
 
-    console.log(`${num}${id}${fileName}${status}${created}`);
+    print(`${num}${id}${fileName}${status}${created}`);
   });
 
   // Print summary
@@ -65,7 +66,7 @@ export async function queueStatusCommand(account: string): Promise<boolean> {
   }
 
   const summary = summaryParts.join(', ');
-  console.log(`\nSummary: ${jobs.length} jobs (${summary})\n`);
+  print(`\nSummary: ${jobs.length} jobs (${summary})\n`);
 
   return true;
 }

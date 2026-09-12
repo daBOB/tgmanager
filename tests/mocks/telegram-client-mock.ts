@@ -91,7 +91,16 @@ export class MockTelegramClient extends EventEmitter {
         .filter(m => m.message?.includes(options.search));
     }
 
-    return Array.from(this.messages.values()).slice(0, options.limit || 100);
+    // Mirror Telegram's history semantics: newest first, `offsetId` exclusive
+    // and walking backwards. Without this the mock would hand back the whole
+    // store on every call and pagination bugs would stay invisible to tests.
+    const newestFirst = Array.from(this.messages.values()).sort((a, b) => b.id - a.id);
+    const offsetId: number | undefined = options.offsetId;
+    const startFrom = offsetId === undefined
+      ? newestFirst
+      : newestFirst.filter(m => m.id < offsetId);
+
+    return startFrom.slice(0, options.limit ?? 100);
   }
 
   async downloadMedia(message: MockMessage, options?: any): Promise<Buffer | null> {

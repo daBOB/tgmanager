@@ -1,21 +1,7 @@
 // src/queue/queue-process-utils.ts
 import logger from '../logger.js';
 import type { QueueJob, QueueFile } from './queue-types.js';
-
-/**
- * Check if a process is alive by PID.
- * Uses process.kill(pid, 0) which doesn't actually kill but checks existence.
- * @param pid - Process ID to check
- * @returns true if process exists, false otherwise
- */
-export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { isProcessAlive } from '../utils/process-liveness.js';
 
 /**
  * Recover stale jobs (processing jobs with dead worker PIDs).

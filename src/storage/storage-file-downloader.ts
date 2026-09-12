@@ -1,5 +1,5 @@
 // Download chunks and manifests from a Telegram storage channel, with hash verification and deletion.
-import { Api } from 'telegram';
+import type { Api } from 'telegram';
 import { mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname } from 'path';
@@ -7,6 +7,7 @@ import type { TelegramClient } from '../types/index.js';
 import type { FileManifest } from './manifest-manager.js';
 import { verifyFile } from './checksum-utils.js';
 import logger from '../logger.js';
+import { withFloodWaitRetry } from '../utils/flood-wait-retry.js';
 
 /**
  * Parse manifest from message text or file attachment.
@@ -70,7 +71,10 @@ export async function downloadChunk(
     await mkdir(outputDir, { recursive: true });
   }
 
-  const messages = await client.getMessages(channelId, { ids: [messageId] });
+  const messages = await withFloodWaitRetry(
+    () => client.getMessages(channelId, { ids: [messageId] }),
+    { context: { messageId, operation: 'getMessages' } }
+  );
   const message = messages[0];
 
   if (!message || !message.media) {
@@ -78,14 +82,18 @@ export async function downloadChunk(
     return false;
   }
 
-  // Download media directly to file (avoids loading multi-GB chunks into memory)
-  const result = await client.downloadMedia(message, {
-    outputFile: outputPath,
-    progressCallback: onProgress ? (downloaded: any) => {
-      const progress = typeof downloaded === 'number' ? downloaded : Number(downloaded);
-      onProgress(progress * 100);
-    } : undefined,
-  });
+  // Download media directly to file (avoids loading multi-GB chunks into memory).
+  // Restores run long enough that a flood wait part-way through is likely.
+  const result = await withFloodWaitRetry(
+    () => client.downloadMedia(message, {
+      outputFile: outputPath,
+      progressCallback: onProgress ? (downloaded: any) => {
+        const progress = typeof downloaded === 'number' ? downloaded : Number(downloaded);
+        onProgress(progress * 100);
+      } : undefined,
+    }),
+    { context: { messageId, operation: 'downloadMedia' } }
+  );
 
   if (!result) {
     logger.error('Failed to download chunk', { messageId });

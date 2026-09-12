@@ -2,13 +2,14 @@
 // Handles uploading large files by splitting into chunks and uploading each chunk
 import { basename, join } from 'path';
 import type { TelegramClient } from '../types/index.js';
-import { StorageService } from '../storage/storage-service.js';
+import type { StorageService } from '../storage/storage-service.js';
 import { splitFile, cleanupChunks } from '../storage/file-splitter.js';
 import { saveManifest, updateManifestStatus, getManifestPath } from '../storage/manifest-manager.js';
 import logger from '../logger.js';
 import config from '../config.js';
 import type { UploadStorageOptions } from './upload-storage-types.js';
 import { createSplitProgressBar, createChunkUploadProgressBar } from './upload-storage-progress-reporter.js';
+import { print, printError } from '../utils/console-output.js';
 
 /** Upload large file by splitting into chunks, uploading each, then finalizing manifest */
 export async function uploadWithSplitting(
@@ -21,7 +22,7 @@ export async function uploadWithSplitting(
   const fileName = basename(filePath);
   const tempDir = join(config.app.uploadDir, '.storage-temp');
 
-  console.log('File exceeds size limit, splitting into chunks...\n');
+  print('File exceeds size limit, splitting into chunks...\n');
 
   const splitBar = createSplitProgressBar();
   splitBar.start(100, 0, { currentChunk: 0, totalChunks: '?' });
@@ -46,14 +47,14 @@ export async function uploadWithSplitting(
     if (!options.force) {
       const existing = await storage.findByHash(manifest.originalHash);
       if (existing) {
-        console.log(`\n⏭  Skipped: identical content already in storage at "${existing.virtualPath}"`);
+        print(`\n⏭  Skipped: identical content already in storage at "${existing.virtualPath}"`);
         logger.info('Duplicate upload skipped (hash match)', { hash: manifest.originalHash, existingPath: existing.virtualPath });
         await cleanupChunks(manifest, tempDir);
         return true;
       }
     }
 
-    console.log(`\nCreated ${manifest.totalChunks} chunks\n`);
+    print(`\nCreated ${manifest.totalChunks} chunks\n`);
 
     const uploadBar = createChunkUploadProgressBar();
     uploadBar.start(100, 0, { chunkIndex: 0, totalChunks: manifest.totalChunks });
@@ -75,9 +76,9 @@ export async function uploadWithSplitting(
 
     await cleanupChunks(finalManifest, tempDir);
 
-    console.log(`\n✓ Upload complete: ${fileName}`);
-    console.log(`  Virtual path: ${virtualPath}`);
-    console.log(`  File ID: ${finalManifest.fileId}`);
+    print(`\n✓ Upload complete: ${fileName}`);
+    print(`  Virtual path: ${virtualPath}`);
+    print(`  File ID: ${finalManifest.fileId}`);
 
     logger.info('Storage upload complete', {
       fileId: finalManifest.fileId,
@@ -100,7 +101,7 @@ export async function uploadWithSplitting(
     }
 
     logger.error('Storage upload failed', { filePath, error: (error as Error).message });
-    console.error(`\n✗ Upload failed: ${(error as Error).message}`);
+    printError(`\n✗ Upload failed: ${(error as Error).message}`);
     return false;
   }
 }

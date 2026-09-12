@@ -1,7 +1,10 @@
 // src/commands/list-storage-command.ts
 import type { TelegramClient } from '../types/index.js';
-import { StorageService, StoredFileInfo } from '../storage/storage-service.js';
+import type { StoredFileInfo } from '../storage/storage-service.js';
+import { StorageService } from '../storage/storage-service.js';
 import logger from '../logger.js';
+import { print, printError } from '../utils/console-output.js';
+import { formatBytes } from './upload-storage-telegram-utils.js';
 
 export interface ListStorageOptions {
   pathPrefix?: string;
@@ -21,7 +24,7 @@ export async function listStorageCommand(
   const storage = new StorageService(client, { storageChannelId });
   await storage.initializeStorageChannel();
 
-  console.log('\nFetching storage contents...\n');
+  print('\nFetching storage contents...\n');
 
   try {
     const files = pathPrefix
@@ -29,9 +32,9 @@ export async function listStorageCommand(
       : await storage.listStoredFiles();
 
     if (files.length === 0) {
-      console.log('No files found in storage.');
+      print('No files found in storage.');
       if (pathPrefix) {
-        console.log(`(filtered by path: ${pathPrefix})`);
+        print(`(filtered by path: ${pathPrefix})`);
       }
       return true;
     }
@@ -42,26 +45,26 @@ export async function listStorageCommand(
     // Group by directory
     const grouped = groupByDirectory(files);
 
-    console.log(`Found ${files.length} file(s):\n`);
+    print(`Found ${files.length} file(s):\n`);
 
     for (const [dir, dirFiles] of Object.entries(grouped)) {
-      console.log(`📁 ${dir || '/'}`);
+      print(`📁 ${dir || '/'}`);
       for (const file of dirFiles) {
         const status = file.status === 'complete' ? '✓' : '⚠';
         const size = formatBytes(file.size);
-        console.log(`   ${status} ${file.originalName} (${size})`);
+        print(`   ${status} ${file.originalName} (${size})`);
       }
-      console.log('');
+      print('');
     }
 
     // Summary
     const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-    console.log(`Total: ${files.length} files, ${formatBytes(totalSize)}`);
+    print(`Total: ${files.length} files, ${formatBytes(totalSize)}`);
 
     return true;
   } catch (error) {
     logger.error('Failed to list storage', { error: (error as Error).message });
-    console.error(`Error: ${(error as Error).message}`);
+    printError(`Error: ${(error as Error).message}`);
     return false;
   }
 }
@@ -86,15 +89,3 @@ function groupByDirectory(files: StoredFileInfo[]): Record<string, StoredFileInf
   return grouped;
 }
 
-/**
- * Format bytes to human readable string
- */
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  while (bytes >= 1024 && i < units.length - 1) {
-    bytes /= 1024;
-    i++;
-  }
-  return `${bytes.toFixed(2)} ${units[i]}`;
-}

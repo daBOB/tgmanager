@@ -2,13 +2,16 @@ import { StringSession, StoreSession } from 'telegram/sessions/index.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import type { Session } from 'telegram/sessions/Abstract.js';
+import logger from './logger.js';
+import { isCompiledBinary } from './utils/runtime-paths.js';
 
 /**
  * Creates a session that works in both development and packaged environments
  */
 export function createSession(sessionDir: string): Session {
-  // For packaged executables, use file-based StringSession
-  if (process.pkg) {
+  // A compiled binary has no writable module directory for StoreSession's
+  // backing store, so persist the session string to a file we control instead.
+  if (isCompiledBinary) {
     const sessionFile = join(sessionDir, 'session.txt');
     
     // Ensure directory exists
@@ -29,7 +32,16 @@ export function createSession(sessionDir: string): Session {
     session.save = function() {
       const result = originalSave();
       writeFileSync(sessionFile, result, 'utf-8');
-      try { chmodSync(sessionFile, 0o600); } catch {}
+      // Best-effort: session file is still usable if the mode can't be tightened
+      // (e.g. exFAT/NTFS mounts), but the weaker permissions are worth recording.
+      try {
+        chmodSync(sessionFile, 0o600);
+      } catch (error) {
+        logger.warn('Could not restrict session file permissions', {
+          sessionFile,
+          error: (error as Error).message,
+        });
+      }
       return result;
     };
     

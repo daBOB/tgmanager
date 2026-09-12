@@ -1,26 +1,17 @@
 import winston from 'winston';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
-import { fileURLToPath } from 'url';
+import { getWritableDataDir } from './utils/runtime-paths.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const logsDir = join(getWritableDataDir(), 'logs');
 
-// Ensure logs directory exists
-let logsDir: string;
+// Best-effort: a read-only or unwritable location must not stop the CLI from
+// running, so file logging is dropped rather than crashing at import time.
+let fileLoggingAvailable = true;
 try {
-  logsDir = process.pkg
-    ? join(process.cwd(), 'logs') // For packaged app, use current working directory
-    : join(dirname(__dirname), 'logs'); // For development, use project directory
+  if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
 } catch {
-  // CWD may not exist (e.g., deleted directory with packaged executable)
-  // Fallback to project directory
-  logsDir = join(dirname(__dirname), 'logs');
-}
-
-// Only create directory if not in pkg snapshot
-if (!process.pkg && !existsSync(logsDir)) {
-  mkdirSync(logsDir, { recursive: true });
+  fileLoggingAvailable = false;
 }
 
 // Custom format for console output
@@ -45,7 +36,7 @@ const fileFormat = winston.format.combine(
     if (Object.keys(meta).length > 0) {
       msg += ` ${JSON.stringify(meta)}`;
     }
-    if (stack) {
+    if (typeof stack === 'string') {
       msg += `\n${stack}`;
     }
     return msg;
@@ -60,57 +51,37 @@ const logger = winston.createLogger({
     new winston.transports.Console({
       format: consoleFormat,
     }),
-    // File transport for all logs
-    new winston.transports.File({
-      filename: join(logsDir, 'app.log'),
-      format: fileFormat,
-      maxsize: 10 * 1024 * 1024, // 10MB
-      maxFiles: 5,
-    }),
-    // File transport for errors only
-    new winston.transports.File({
-      filename: join(logsDir, 'error.log'),
-      level: 'error',
-      format: fileFormat,
-      maxsize: 10 * 1024 * 1024, // 10MB
-      maxFiles: 5,
-    }),
+    // File transports, only when the log directory could actually be created
+    ...(fileLoggingAvailable
+      ? [
+          // All logs
+          new winston.transports.File({
+            filename: join(logsDir, 'app.log'),
+            format: fileFormat,
+            maxsize: 10 * 1024 * 1024, // 10MB
+            maxFiles: 5,
+          }),
+          // Errors only
+          new winston.transports.File({
+            filename: join(logsDir, 'error.log'),
+            level: 'error',
+            format: fileFormat,
+            maxsize: 10 * 1024 * 1024, // 10MB
+            maxFiles: 5,
+          }),
+        ]
+      : []),
   ],
   exitOnError: false,
 });
 
-// Helper functions for common logging patterns
-interface SanitizedParams {
-  [key: string]: unknown;
-  password?: string;
-  phoneNumber?: string;
-  apiHash?: string;
-}
-
-export const logApiCall = (method: string, params: Record<string, unknown> = {}): void => {
-  // Sanitize sensitive data
-  const sanitized: SanitizedParams = { ...params };
-  if (sanitized.password) sanitized.password = '[REDACTED]';
-  if (sanitized.phoneNumber) sanitized.phoneNumber = '[REDACTED]';
-  if (sanitized.apiHash) sanitized.apiHash = '[REDACTED]';
-  
-  logger.debug('API call', { method, params: sanitized });
-};
-
+// Structured helper for the one event worth reporting uniformly
 export const logUpload = (fileName: string, chatId: string, size: number, duration: number): void => {
   logger.info('File upload completed', {
     fileName,
     chatId,
     size: `${(size / 1024 / 1024).toFixed(2)} MB`,
     duration: `${duration}ms`,
-  });
-};
-
-export const logError = (error: Error, context: Record<string, unknown> = {}): void => {
-  logger.error(error.message, {
-    ...context,
-    stack: error.stack,
-    code: (error as any).code,
   });
 };
 

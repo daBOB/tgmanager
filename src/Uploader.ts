@@ -5,7 +5,7 @@ import cliProgress from 'cli-progress';
 import logger, { logUpload } from './logger.js';
 import config from './config.js';
 import { getVideoInfo } from './uploader/video-metadata-extractor.js';
-import { withFloodWaitRetry } from './uploader/flood-wait-retry-handler.js';
+import { withFloodWaitRetryAndProgress } from './uploader/flood-wait-retry-handler.js';
 import { uploadImageWithResize } from './uploader/image-resize-and-upload.js';
 import type { TelegramClient, UploadOptions } from './types/index.js';
 
@@ -50,9 +50,25 @@ export class Uploader {
     }
   }
 
-  async uploadMP4File(chatId: string, filePath: string): Promise<boolean> {
-    const startTime = Date.now();
-    const { width, height, duration } = await getVideoInfo(filePath);
+  /**
+   * Shared send path for every file type: progress-bar lifecycle, flood-wait
+   * retry, success logging and failure handling are identical, so only the
+   * type-specific send options and the error label vary.
+   *
+   * `startTime` is passed in so the reported duration covers any preparation
+   * the caller did (video probing) rather than the send alone.
+   *
+   * `extraOptions` cannot carry `file`, `caption` or `progressCallback`: it is
+   * spread last, so allowing them would let a caller silently detach the
+   * progress bar.
+   */
+  private async sendFileWithProgress(
+    chatId: string,
+    filePath: string,
+    startTime: number,
+    errorMessage: string,
+    extraOptions: Partial<Omit<UploadOptions, 'file' | 'caption' | 'progressCallback'>> = {}
+  ): Promise<boolean> {
     const fileName = basename(filePath);
     const fileSize = (await stat(filePath)).size;
     const progressBar = new cliProgress.SingleBar(
@@ -62,28 +78,20 @@ export class Uploader {
 
     try {
       progressBar.start(100, 0);
-      await withFloodWaitRetry(async () => {
+      await withFloodWaitRetryAndProgress(async () => {
         await this.client.sendFile(chatId, {
           file: filePath,
           caption: fileName,
-          mimeType: 'video/mp4',
-          attributes: [
-            new Api.DocumentAttributeVideo({
-              duration: Math.round(duration),
-              h: height,
-              w: width,
-              supportsStreaming: true,
-            }),
-          ],
           progressCallback: (e: number) => progressBar.update(Math.floor(e * 100)),
-        } as UploadOptions);
+          ...extraOptions,
+        });
       }, progressBar);
       progressBar.stop();
       logUpload(fileName, chatId, fileSize, Date.now() - startTime);
       return true;
     } catch (error) {
       progressBar.stop();
-      logger.error('Failed to upload MP4 file', {
+      logger.error(errorMessage, {
         fileName, chatId,
         error: (error as Error).message,
         code: (error as any).code
@@ -92,36 +100,25 @@ export class Uploader {
     }
   }
 
-  async uploadDocument(chatId: string, filePath: string): Promise<boolean> {
+  async uploadMP4File(chatId: string, filePath: string): Promise<boolean> {
     const startTime = Date.now();
-    const fileName = basename(filePath);
-    const fileSize = (await stat(filePath)).size;
-    const progressBar = new cliProgress.SingleBar(
-      { etaAsynchronousUpdate: true, etaBuffer: 40, fps: 5 },
-      cliProgress.Presets.shades_classic
-    );
+    const { width, height, duration } = await getVideoInfo(filePath);
 
-    try {
-      progressBar.start(100, 0);
-      await withFloodWaitRetry(async () => {
-        await this.client.sendFile(chatId, {
-          file: filePath,
-          caption: fileName,
-          progressCallback: (e: number) => progressBar.update(Math.floor(e * 100)),
-        });
-      }, progressBar);
-      progressBar.stop();
-      logUpload(fileName, chatId, fileSize, Date.now() - startTime);
-      return true;
-    } catch (error) {
-      progressBar.stop();
-      logger.error('Failed to upload document', {
-        fileName, chatId,
-        error: (error as Error).message,
-        code: (error as any).code
-      });
-      return false;
-    }
+    return this.sendFileWithProgress(chatId, filePath, startTime, 'Failed to upload MP4 file', {
+      mimeType: 'video/mp4',
+      attributes: [
+        new Api.DocumentAttributeVideo({
+          duration: Math.round(duration),
+          h: height,
+          w: width,
+          supportsStreaming: true,
+        }),
+      ],
+    });
+  }
+
+  async uploadDocument(chatId: string, filePath: string): Promise<boolean> {
+    return this.sendFileWithProgress(chatId, filePath, Date.now(), 'Failed to upload document');
   }
 
   async uploadFile(chatId: string, filePath: string): Promise<boolean> {

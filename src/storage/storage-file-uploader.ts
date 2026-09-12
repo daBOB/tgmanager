@@ -1,9 +1,14 @@
 // Upload chunks and manifests to a Telegram storage channel with retry/resume support.
-import { Api } from 'telegram';
 import type { TelegramClient } from '../types/index.js';
-import { FileManifest, updateChunkMessageId, getChunksToUpload } from './manifest-manager.js';
-import { buildChunkCaption, sanitizeCaption, sleep } from './storage-channel-manager.js';
+import { writeFile, unlink } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import type { FileManifest } from './manifest-manager.js';
+import { updateChunkMessageId, getChunksToUpload } from './manifest-manager.js';
+import { buildChunkCaption, sanitizeCaption } from './storage-channel-manager.js';
+import { sleep } from '../utils/sleep.js';
 import logger from '../logger.js';
+import { withFloodWaitRetry } from '../utils/flood-wait-retry.js';
 
 export interface UploadProgress {
   chunkIndex: number;
@@ -28,27 +33,14 @@ export async function uploadChunk(
 
   const caption = buildChunkCaption(manifest.fileId, chunk);
 
-  const upload = async (retryCount = 0): Promise<Api.Message> => {
-    try {
-      const result = await client.sendFile(channelId, {
-        file: chunkPath,
-        caption,
-        progressCallback: onProgress ? (p: number) => onProgress(p * 100) : undefined,
-      });
-      return result as Api.Message;
-    } catch (error: any) {
-      if (error.code === 420 && retryCount < 10) {
-        const waitSeconds = error.seconds ?? 60;
-        const waitWithBuffer = Math.max(1, Math.ceil(waitSeconds * floodWaitMultiplier));
-        logger.warn('Flood wait on chunk upload, retrying', { chunkIndex, waitSeconds: waitWithBuffer, retryCount });
-        await sleep(waitWithBuffer * 1000);
-        return upload(retryCount + 1);
-      }
-      throw error;
-    }
-  };
-
-  const message = await upload();
+  const message = await withFloodWaitRetry(
+    () => client.sendFile(channelId, {
+      file: chunkPath,
+      caption,
+      progressCallback: onProgress ? (p: number) => onProgress(p * 100) : undefined,
+    }),
+    { multiplier: floodWaitMultiplier, context: { fileId: manifest.fileId, chunkIndex } }
+  );
   logger.debug('Chunk uploaded', { fileId: manifest.fileId, chunkIndex, messageId: message.id });
   return message.id;
 }
@@ -62,7 +54,6 @@ export async function uploadAllChunks(
   floodWaitMultiplier: number,
   onProgress?: (progress: UploadProgress) => void
 ): Promise<FileManifest> {
-  const { join } = await import('path');
   let updatedManifest = { ...manifest };
   const totalBytes = manifest.originalSize;
   let bytesUploaded = 0;
@@ -130,15 +121,11 @@ export async function uploadManifest(
   }
 
   // Large manifest: upload as JSON file attachment
-  const { writeFile: writeFileAsync } = await import('fs/promises');
-  const { join } = await import('path');
-  const { tmpdir } = await import('os');
   const tempPath = join(tmpdir(), `${manifest.fileId}.manifest.json`);
-  await writeFileAsync(tempPath, manifestJson, 'utf-8');
+  await writeFile(tempPath, manifestJson, 'utf-8');
 
   const message = await client.sendFile(channelId, { file: tempPath, caption });
 
-  const { unlink } = await import('fs/promises');
   await unlink(tempPath).catch(() => {});
 
   logger.info('Manifest uploaded as file (exceeded message limit)', {

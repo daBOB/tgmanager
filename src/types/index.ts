@@ -80,17 +80,5 @@ export interface CommandOptions {
   wait?: boolean;
 }
 
-export interface UploadResult {
-  success: boolean;
-  fileName?: string;
-  error?: Error;
-}
-
-export interface ValidationResult<T> {
-  valid: boolean;
-  value?: T;
-  error?: string;
-}
-
 // Re-export types from dependencies for convenience
 export type { Api, TelegramClient, StoreSession };

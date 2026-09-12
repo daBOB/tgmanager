@@ -3,9 +3,10 @@
 import { createReadStream, createWriteStream, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
-import { FileManifest } from './manifest-manager.js';
-import { SplitProgress } from './file-chunk-splitter.js';
+import type { FileManifest } from './manifest-manager.js';
+import type { SplitProgress } from './file-chunk-splitter.js';
 import logger from '../logger.js';
+import { closeWriteStream } from './file-split-utils.js';
 
 export async function mergeChunks(
   manifest: FileManifest,
@@ -60,12 +61,7 @@ export async function mergeChunks(
     logger.debug('Chunk merged', { index: chunk.index, filename: chunk.filename });
   }
 
-  await new Promise<void>((resolve, reject) => {
-    writeStream.end((err?: Error) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  });
+  await closeWriteStream(writeStream);
 
   const { verifyFile } = await import('./checksum-utils.js');
   const isValid = await verifyFile(outputPath, manifest.originalHash);

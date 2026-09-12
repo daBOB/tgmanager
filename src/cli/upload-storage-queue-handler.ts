@@ -3,18 +3,28 @@ import { posix, basename } from 'path';
 import logger from '../logger.js';
 import { walkDirectory } from '../utils/directory-walker.js';
 import { startClient } from './command-dispatcher.js';
+import { print, printError } from '../utils/console-output.js';
 import type { CommandOptions } from '../types/index.js';
+import type { StoredFileInfo } from '../storage/storage-service.js';
+import type { QueueAddOptions } from '../queue/queue-types.js';
 
-export interface QueueResult {
-  queuedJob: any | null;
-  queuedJobIds: string[];
-}
+/**
+ * Outcome of the pre-lock queuing step.
+ * `done` means there is nothing further to do and the CLI should exit with the
+ * given code — either everything was already in storage, or the input was bad.
+ */
+export type QueueOutcome =
+  | { kind: 'queued'; jobIds: string[] }
+  | { kind: 'done'; exitCode: number };
 
 /**
  * Fetch existing files from storage for duplicate detection.
  * Returns empty array on error (dedup skipped with warning).
  */
-async function fetchExistingFiles(account: string, storageChannelId?: string): Promise<import('../storage/storage-service.js').StoredFileInfo[]> {
+async function fetchExistingFiles(
+  account: string,
+  storageChannelId?: string
+): Promise<StoredFileInfo[]> {
   try {
     const dedupClient = await startClient(account);
     const { StorageService } = await import('../storage/storage-service.js');
@@ -24,93 +34,102 @@ async function fetchExistingFiles(account: string, storageChannelId?: string): P
     await dedupClient.disconnect();
     return files;
   } catch (err) {
-    logger.warn('Failed to check for duplicates, proceeding without dedup', { error: (err as Error).message });
+    logger.warn('Failed to check for duplicates, proceeding without dedup', {
+      error: (err as Error).message,
+    });
     return [];
   }
 }
 
-/** Queue directory entries as individual upload jobs. Returns job IDs queued. */
+/** Queue directory entries as individual upload jobs. Returns null if empty. */
 async function queueDirectory(
   account: string,
   uploadPath: string,
   options: CommandOptions,
-  existingFiles: import('../storage/storage-service.js').StoredFileInfo[],
-  addJob: Function
-): Promise<{ jobIds: string[]; skippedCount: number }> {
+  existingFiles: StoredFileInfo[]
+): Promise<{ jobIds: string[]; skippedCount: number } | null> {
   const entries = await walkDirectory(uploadPath);
   if (entries.length === 0) {
-    console.error(`❌ No files found in directory: ${basename(uploadPath)}`);
-    process.exit(1);
+    printError(`❌ No files found in directory: ${basename(uploadPath)}`);
+    return null;
   }
 
   const dirName = basename(uploadPath);
-  const jobIds: string[] = [];
+  // Set lookup: the linear scan was O(entries x storedFiles).
+  const storedPaths = new Set(existingFiles.map(f => f.virtualPath));
+  const toQueue: QueueAddOptions[] = [];
   let skippedCount = 0;
 
   for (const entry of entries) {
-    const fileVirtualPath = posix.join(options.virtualPath!, dirName, entry.relativePath.split('/').join('/'));
-    if (existingFiles.length > 0 && existingFiles.some(f => f.virtualPath === fileVirtualPath)) {
+    const fileVirtualPath = posix.join(options.virtualPath!, dirName, entry.relativePath);
+    if (storedPaths.has(fileVirtualPath)) {
       skippedCount++;
       continue;
     }
-    const job = addJob(account, {
+    toQueue.push({
       filePath: entry.absolutePath,
       virtualPath: fileVirtualPath,
       storageChannelId: options.storageChannel,
       deleteSource: options.deleteSource,
     });
-    jobIds.push(job.id);
   }
 
-  return { jobIds, skippedCount };
+  // One locked read-modify-write for the whole directory.
+  const { addJobs } = await import('../queue/queue-manager.js');
+  const jobs = toQueue.length > 0 ? addJobs(account, toQueue) : [];
+  return { jobIds: jobs.map(j => j.id), skippedCount };
 }
 
 /**
  * Handle upload-storage pre-lock queuing.
- * Validates path, checks duplicates, enqueues job(s). Returns queued job refs.
+ * Validates path, checks duplicates, enqueues job(s).
  */
 export async function handleUploadStorageQueue(
   account: string,
   uploadPath: string,
   options: CommandOptions
-): Promise<QueueResult> {
+): Promise<QueueOutcome> {
   if (!existsSync(uploadPath)) {
     logger.error(`File not found: ${uploadPath}`);
-    console.error(`❌ File not found: ${uploadPath}`);
-    process.exit(1);
+    printError(`❌ File not found: ${uploadPath}`);
+    return { kind: 'done', exitCode: 1 };
   }
 
   const existingFiles = options.force ? [] : await fetchExistingFiles(account, options.storageChannel);
   const { addJob, getQueuePosition } = await import('../queue/queue-manager.js');
 
   if (statSync(uploadPath).isDirectory()) {
-    const { jobIds, skippedCount } = await queueDirectory(account, uploadPath, options, existingFiles, addJob);
+    const queued = await queueDirectory(account, uploadPath, options, existingFiles);
+    if (!queued) return { kind: 'done', exitCode: 1 };
+
+    const { jobIds, skippedCount } = queued;
     const dirName = basename(uploadPath);
 
-    if (jobIds.length > 0) console.log(`\n✓ Queued ${jobIds.length} files from '${dirName}' for upload`);
-    if (skippedCount > 0) console.log(`⏭  Skipped ${skippedCount} file(s) already in storage`);
+    if (jobIds.length > 0) print(`\n✓ Queued ${jobIds.length} files from '${dirName}' for upload`);
+    if (skippedCount > 0) print(`⏭  Skipped ${skippedCount} file(s) already in storage`);
     if (jobIds.length === 0 && skippedCount > 0) {
-      console.log(`\nAll ${skippedCount} files already in storage. Nothing to queue.`);
-      process.exit(0);
+      print(`\nAll ${skippedCount} files already in storage. Nothing to queue.`);
+      return { kind: 'done', exitCode: 0 };
     }
+
     logger.info('Directory queued', { dir: dirName, queued: jobIds.length, skipped: skippedCount });
-    return { queuedJob: null, queuedJobIds: jobIds };
+    return { kind: 'queued', jobIds };
   }
 
   // Single file — check path duplicate
   if (existingFiles.length > 0 && existingFiles.some(f => f.virtualPath === options.virtualPath)) {
-    console.log(`⏭  Skipped: "${options.virtualPath}" already exists in storage. Use --force to re-upload.`);
-    process.exit(0);
+    print(`⏭  Skipped: "${options.virtualPath}" already exists in storage. Use --force to re-upload.`);
+    return { kind: 'done', exitCode: 0 };
   }
 
   const queuedJob = addJob(account, {
     filePath: uploadPath,
     virtualPath: options.virtualPath!,
     storageChannelId: options.storageChannel,
-    deleteSource: options.deleteSource
+    deleteSource: options.deleteSource,
   });
   const position = getQueuePosition(account, queuedJob.id);
-  console.log(`\n✓ Added to upload queue (position: ${position})`);
+  print(`\n✓ Added to upload queue (position: ${position})`);
   logger.info('Job added to queue', { jobId: queuedJob.id, position });
-  return { queuedJob, queuedJobIds: [] };
+  return { kind: 'queued', jobIds: [queuedJob.id] };
 }

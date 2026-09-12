@@ -8,6 +8,8 @@ import { StorageService } from '../storage/storage-service.js';
 import { mergeChunks, cleanupChunks } from '../storage/file-splitter.js';
 import logger from '../logger.js';
 import config from '../config.js';
+import { print, printError } from '../utils/console-output.js';
+import { formatBytes } from './upload-storage-telegram-utils.js';
 
 export interface DownloadStorageOptions {
   virtualPath: string;
@@ -25,7 +27,7 @@ export async function downloadStorageCommand(
 ): Promise<boolean> {
   const { virtualPath, outputPath, storageChannelId, force } = options;
 
-  console.log(`\nSearching for: ${virtualPath}\n`);
+  print(`\nSearching for: ${virtualPath}\n`);
 
   // Initialize storage service
   const storage = new StorageService(client, { storageChannelId });
@@ -35,24 +37,24 @@ export async function downloadStorageCommand(
   const fileInfo = await storage.findByPath(virtualPath);
 
   if (!fileInfo) {
-    console.error(`Error: File not found: ${virtualPath}`);
+    printError(`Error: File not found: ${virtualPath}`);
     logger.error('File not found in storage', { virtualPath });
     return false;
   }
 
-  console.log(`Found: ${fileInfo.originalName}`);
-  console.log(`Size: ${formatBytes(fileInfo.size)}`);
-  console.log(`Status: ${fileInfo.status}\n`);
+  print(`Found: ${fileInfo.originalName}`);
+  print(`Size: ${formatBytes(fileInfo.size)}`);
+  print(`Status: ${fileInfo.status}\n`);
 
   if (fileInfo.status !== 'complete') {
-    console.error('Error: File upload incomplete or failed');
+    printError('Error: File upload incomplete or failed');
     return false;
   }
 
   // Get full manifest
   const manifest = await storage.getManifestFromMessage(fileInfo.manifestMessageId);
   if (!manifest) {
-    console.error('Error: Could not retrieve file manifest');
+    printError('Error: Could not retrieve file manifest');
     return false;
   }
 
@@ -62,8 +64,8 @@ export async function downloadStorageCommand(
 
   // Check if output already exists
   if (existsSync(finalOutputPath) && !force) {
-    console.error(`Error: Output file already exists: ${finalOutputPath}`);
-    console.error('Use --force to overwrite or specify different --output-path');
+    printError(`Error: Output file already exists: ${finalOutputPath}`);
+    printError('Use --force to overwrite or specify different --output-path');
     return false;
   }
 
@@ -78,7 +80,7 @@ export async function downloadStorageCommand(
     await mkdir(tempDir, { recursive: true });
   }
 
-  console.log(`Downloading ${manifest.totalChunks} chunk(s)...\n`);
+  print(`Downloading ${manifest.totalChunks} chunk(s)...\n`);
 
   // Progress bar for downloading
   const downloadBar = new cliProgress.SingleBar({
@@ -137,7 +139,7 @@ export async function downloadStorageCommand(
     }
 
     downloadBar.stop();
-    console.log('\nMerging chunks...');
+    print('\nMerging chunks...');
 
     // Merge chunks
     const mergeBar = new cliProgress.SingleBar({
@@ -153,14 +155,14 @@ export async function downloadStorageCommand(
     mergeBar.stop();
 
     if (!mergeSuccess) {
-      console.error('\n✗ File integrity verification failed');
+      printError('\n✗ File integrity verification failed');
       return false;
     }
 
     // Cleanup temp chunks
     await cleanupChunks(manifest, tempDir);
 
-    console.log(`\n✓ Download complete: ${finalOutputPath}`);
+    print(`\n✓ Download complete: ${finalOutputPath}`);
     logger.info('Storage download complete', {
       fileId: manifest.fileId,
       outputPath: finalOutputPath
@@ -173,20 +175,8 @@ export async function downloadStorageCommand(
       virtualPath,
       error: (error as Error).message
     });
-    console.error(`\n✗ Download failed: ${(error as Error).message}`);
+    printError(`\n✗ Download failed: ${(error as Error).message}`);
     return false;
   }
 }
 
-/**
- * Format bytes to human readable string
- */
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  while (bytes >= 1024 && i < units.length - 1) {
-    bytes /= 1024;
-    i++;
-  }
-  return `${bytes.toFixed(2)} ${units[i]}`;
-}

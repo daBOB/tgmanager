@@ -5,6 +5,5 @@ export interface UploadStorageOptions {
   filePath: string;
   virtualPath: string;
   storageChannelId?: string;
-  deleteSource?: boolean;
   force?: boolean;
 }

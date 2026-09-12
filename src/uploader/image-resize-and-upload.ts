@@ -88,11 +88,9 @@ async function resizeAndUpload(
   const resizedFilePath = `${filePath}_resized${extension}`;
   await sharp(filePath).resize(newWidth, newHeight).toFile(resizedFilePath);
 
-  let success = false;
   try {
-    success = await uploadFn(resizedFilePath);
+    return await uploadFn(resizedFilePath);
   } finally {
     await unlink(resizedFilePath).catch(() => {});
   }
-  return success;
 }

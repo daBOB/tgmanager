@@ -2,6 +2,8 @@
 import type { TelegramClient } from '../types/index.js';
 import type { FileManifest } from './manifest-manager.js';
 import { parseManifestFromMessage } from './storage-file-downloader.js';
+import pLimit from 'p-limit';
+import logger from '../logger.js';
 
 export interface StoredFileInfo {
   fileId: string;
@@ -14,71 +16,171 @@ export interface StoredFileInfo {
   manifestMessageId: number;
 }
 
+/** Messages fetched per request while walking the channel history. */
+const PAGE_SIZE = 100;
+
 /**
- * List all stored files by iterating channel messages and filtering for manifests.
- * Uses direct message iteration instead of Telegram search API, which can be
- * unreliable for small/new channels where the search index hasn't been built.
+ * Hard stop on how many messages a single walk will read.
+ * Chunk uploads share the channel with manifests, so history grows fast; this
+ * bounds worst-case API usage rather than the result set. Raise it only
+ * alongside a real index (e.g. a pinned catalogue message).
  */
-export async function listStoredFiles(
+const MAX_MESSAGES_SCANNED = 100_000;
+
+/**
+ * Concurrent manifest parses within a page. Manifests that exceeded Telegram's
+ * message limit are stored as attachments, so parsing one costs a download;
+ * doing those serially across the whole history dominates the walk.
+ */
+const MANIFEST_PARSE_CONCURRENCY = 8;
+
+/**
+ * Build the full virtual path for a manifest.
+ * `originalPath` is the directory prefix (e.g. "Video/VR") and `originalName`
+ * the filename; lookups are done against the two joined.
+ */
+function toStoredFileInfo(manifest: FileManifest, messageId: number): StoredFileInfo {
+  const dir = manifest.originalPath.replace(/\/+$/, '');
+  return {
+    fileId: manifest.fileId,
+    originalName: manifest.originalName,
+    virtualPath: dir ? `${dir}/${manifest.originalName}` : manifest.originalName,
+    size: manifest.originalSize,
+    originalHash: manifest.originalHash,
+    status: manifest.status,
+    createdAt: manifest.createdAt,
+    manifestMessageId: messageId,
+  };
+}
+
+/**
+ * List all stored files by walking the channel's message history.
+ *
+ * Paginates with `offsetId` until the history is exhausted: a single page would
+ * only reveal the most recent uploads, silently hiding every older file from
+ * path lookups, hash dedup and `list-storage`.
+ *
+ * Uses direct message iteration instead of the Telegram search API, which can
+ * be unreliable for small/new channels where the search index isn't built yet.
+ */
+async function listStoredFiles(
   client: TelegramClient,
   channelId: string
 ): Promise<StoredFileInfo[]> {
   const files: StoredFileInfo[] = [];
+  let offsetId: number | undefined;
+  let scanned = 0;
 
-  const messages = await client.getMessages(channelId, { limit: 100 });
+  for (;;) {
+    const page = await client.getMessages(channelId, {
+      limit: PAGE_SIZE,
+      ...(offsetId === undefined ? {} : { offsetId }),
+    });
 
-  for (const message of messages) {
-    if (!message.message?.includes('#manifest')) continue;
+    if (page.length === 0) break;
 
-    const manifest = await parseManifestFromMessage(client, message);
-    if (manifest) {
-      // Build full virtual path: originalPath is the directory prefix (e.g. "Video/VR"),
-      // originalName is the filename. Join them to get the full path for lookup.
-      const dir = manifest.originalPath.replace(/\/+$/, '');
-      const fullPath = dir ? `${dir}/${manifest.originalName}` : manifest.originalName;
+    scanned += page.length;
 
-      files.push({
-        fileId: manifest.fileId,
-        originalName: manifest.originalName,
-        virtualPath: fullPath,
-        size: manifest.originalSize,
-        originalHash: manifest.originalHash,
-        status: manifest.status,
-        createdAt: manifest.createdAt,
-        manifestMessageId: message.id
+    // Parse this page's manifests concurrently, then append in page order so
+    // the overall result stays newest-first.
+    const manifestMessages = page.filter(m => m.message?.includes('#manifest'));
+    const limit = pLimit(MANIFEST_PARSE_CONCURRENCY);
+    const parsed = await Promise.all(
+      manifestMessages.map(message =>
+        limit(async () => {
+          const manifest = await parseManifestFromMessage(client, message);
+          return manifest ? toStoredFileInfo(manifest, message.id) : null;
+        })
+      )
+    );
+    for (const entry of parsed) {
+      if (entry) files.push(entry);
+    }
+
+    // `offsetId` is exclusive and walks backwards through history.
+    const oldest = page[page.length - 1];
+    if (!oldest) break;
+    offsetId = oldest.id;
+
+    if (page.length < PAGE_SIZE) break;
+
+    if (scanned >= MAX_MESSAGES_SCANNED) {
+      logger.warn('Stopped scanning storage channel at safety limit', {
+        scanned,
+        found: files.length,
       });
+      break;
     }
   }
 
+  logger.debug('Storage channel scan complete', { scanned, manifests: files.length });
   return files;
 }
 
-/** List files whose virtualPath starts with the given prefix */
-export async function listByPath(
-  client: TelegramClient,
-  channelId: string,
-  pathPrefix: string
-): Promise<StoredFileInfo[]> {
-  const all = await listStoredFiles(client, channelId);
-  return all.filter(f => f.virtualPath.startsWith(pathPrefix));
-}
+/**
+ * Caches one full channel walk for the lifetime of the passed-in object.
+ *
+ * A batch upload calls findByHash once per file; without this each call would
+ * re-download the entire channel history. The cache is deliberately per-call-site
+ * (not module-global) so a long-lived process can't serve stale results.
+ */
+export class StorageIndex {
+  private cached: Promise<StoredFileInfo[]> | null = null;
+  /** Files added since the walk, newest first. Kept separate so appending is O(1). */
+  private appended: StoredFileInfo[] = [];
 
-/** Find file by exact virtualPath, returns null if not found */
-export async function findByPath(
-  client: TelegramClient,
-  channelId: string,
-  virtualPath: string
-): Promise<StoredFileInfo | null> {
-  const all = await listStoredFiles(client, channelId);
-  return all.find(f => f.virtualPath === virtualPath) ?? null;
-}
+  constructor(
+    private readonly client: TelegramClient,
+    private readonly channelId: string
+  ) {}
 
-/** Find file by SHA-256 content hash, returns first match or null */
-export async function findByHash(
-  client: TelegramClient,
-  channelId: string,
-  hash: string
-): Promise<StoredFileInfo | null> {
-  const all = await listStoredFiles(client, channelId);
-  return all.find(f => f.originalHash === hash) ?? null;
+  /** All stored files, newest first, fetched once and reused. */
+  async all(): Promise<StoredFileInfo[]> {
+    const walked = await this.walked();
+    return this.appended.length === 0 ? walked : [...this.appended, ...walked];
+  }
+
+  /** The cached channel walk, started at most once. */
+  private walked(): Promise<StoredFileInfo[]> {
+    return (this.cached ??= listStoredFiles(this.client, this.channelId));
+  }
+
+  /** Drop the cache so the next read re-walks the channel. */
+  invalidate(): void {
+    this.cached = null;
+    this.appended = [];
+  }
+
+  /** Record a newly uploaded file without paying for a full re-walk. */
+  add(manifest: FileManifest, manifestMessageId: number): void {
+    if (!this.cached) return;
+    this.appended.unshift(toStoredFileInfo(manifest, manifestMessageId));
+  }
+
+  async listByPath(pathPrefix: string): Promise<StoredFileInfo[]> {
+    const match = (f: StoredFileInfo): boolean => f.virtualPath.startsWith(pathPrefix);
+    const walked = await this.walked();
+    return this.appended.length === 0
+      ? walked.filter(match)
+      : [...this.appended.filter(match), ...walked.filter(match)];
+  }
+
+  async findByPath(virtualPath: string): Promise<StoredFileInfo | null> {
+    return this.find(f => f.virtualPath === virtualPath);
+  }
+
+  async findByHash(hash: string): Promise<StoredFileInfo | null> {
+    return this.find(f => f.originalHash === hash);
+  }
+
+  /**
+   * Search appended-then-walked in place. A queue drain appends after every
+   * job, so building the combined list on each dedup lookup would cost
+   * O(jobs x history) copying over a drain.
+   */
+  private async find(predicate: (f: StoredFileInfo) => boolean): Promise<StoredFileInfo | null> {
+    const fresh = this.appended.find(predicate);
+    if (fresh) return fresh;
+    return (await this.walked()).find(predicate) ?? null;
+  }
 }

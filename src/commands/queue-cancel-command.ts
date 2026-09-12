@@ -1,6 +1,7 @@
 // src/commands/queue-cancel-command.ts
 import { basename } from 'path';
 import { listJobs, cancelJob } from '../queue/queue-manager.js';
+import { print, printError } from '../utils/console-output.js';
 
 /**
  * Cancel a pending job by full or partial job ID.
@@ -19,15 +20,15 @@ export async function queueCancelCommand(account: string, jobId: string): Promis
 
   // No matches
   if (matches.length === 0) {
-    console.error(`Error: No job found with ID starting with "${jobId}"`);
+    printError(`Error: No job found with ID starting with "${jobId}"`);
     return false;
   }
 
   // Multiple matches (ambiguous)
   if (matches.length > 1) {
-    console.error(`Error: Ambiguous job ID "${jobId}". Multiple matches found:`);
+    printError(`Error: Ambiguous job ID "${jobId}". Multiple matches found:`);
     for (const match of matches) {
-      console.error(`  - ${match.id.substring(0, 8)} (${basename(match.filePath)})`);
+      printError(`  - ${match.id.substring(0, 8)} (${basename(match.filePath)})`);
     }
     return false;
   }
@@ -37,7 +38,7 @@ export async function queueCancelCommand(account: string, jobId: string): Promis
 
   // Check if job can be cancelled (must be pending)
   if (job.status !== 'pending') {
-    console.error(`Cannot cancel: status is ${job.status}`);
+    printError(`Cannot cancel: status is ${job.status}`);
     return false;
   }
 
@@ -45,11 +46,11 @@ export async function queueCancelCommand(account: string, jobId: string): Promis
   const success = cancelJob(account, job.id);
 
   if (!success) {
-    console.error(`Failed to cancel job ${job.id.substring(0, 8)}`);
+    printError(`Failed to cancel job ${job.id.substring(0, 8)}`);
     return false;
   }
 
   // Success
-  console.log(`Cancelled job ${job.id.substring(0, 8)} (${basename(job.filePath)})`);
+  print(`Cancelled job ${job.id.substring(0, 8)} (${basename(job.filePath)})`);
   return true;
 }

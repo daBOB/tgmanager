@@ -152,16 +152,6 @@ export function getManifestPath(baseDir: string, fileId: string): string {
 }
 
 /**
- * Delete manifest file
- */
-export async function deleteManifest(filePath: string): Promise<void> {
-  if (existsSync(filePath)) {
-    const { unlink } = await import('fs/promises');
-    await unlink(filePath);
-  }
-}
-
-/**
  * Get chunks that need uploading (for resume support)
  * A chunk needs uploading if it's not marked as uploaded
  */

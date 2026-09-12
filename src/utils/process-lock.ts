@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import logger from '../logger.js';
+import { isProcessAlive } from './process-liveness.js';
 
 /**
  * Process lock to prevent multiple instances from running with the same account
@@ -31,7 +32,7 @@ export class ProcessLock {
         const lockContent = readFileSync(this.lockFile, 'utf-8').trim();
         const lockPid = parseInt(lockContent, 10);
 
-        if (!force && this.isProcessRunning(lockPid)) {
+        if (!force && isProcessAlive(lockPid)) {
           logger.error('Another instance is already running', { 
             pid: lockPid,
             lockFile: this.lockFile 
@@ -79,19 +80,6 @@ export class ProcessLock {
         error: (error as Error).message,
         lockFile: this.lockFile 
       });
-    }
-  }
-
-  /**
-   * Check if a process is running
-   */
-  private isProcessRunning(pid: number): boolean {
-    try {
-      // Sending signal 0 checks if process exists without actually sending a signal
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return false;
     }
   }
 

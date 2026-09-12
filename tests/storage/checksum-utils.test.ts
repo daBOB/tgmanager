@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { writeFile, unlink, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import { makeTempDir } from '../helpers/test-fixtures.js';
 import {
   hashFile,
   hashChunk,
@@ -10,7 +11,7 @@ import {
   verifyFile
 } from '../../src/storage/checksum-utils.js';
 
-const TEST_DIR = join(process.cwd(), 'tests', '.temp');
+const TEST_DIR = makeTempDir('checksum');
 
 describe('checksum-utils', () => {
   beforeAll(async () => {

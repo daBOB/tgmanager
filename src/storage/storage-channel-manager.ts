@@ -2,19 +2,18 @@
 import { Api } from 'telegram';
 import type { TelegramClient } from '../types/index.js';
 import logger from '../logger.js';
+import { DEFAULT_FLOOD_WAIT_MULTIPLIER } from '../utils/flood-wait-retry.js';
 
 export interface StorageServiceConfig {
   storageChannelId?: string;
   storageChannelTitle?: string;
-  maxConcurrentUploads?: number;
   floodWaitMultiplier?: number;
 }
 
 export const DEFAULT_CONFIG: Required<StorageServiceConfig> = {
   storageChannelId: '',
   storageChannelTitle: 'TGManager Storage',
-  maxConcurrentUploads: 3,
-  floodWaitMultiplier: 1.5
+  floodWaitMultiplier: DEFAULT_FLOOD_WAIT_MULTIPLIER
 };
 
 /** Build caption string for chunk message (used for searching) */
@@ -32,9 +31,6 @@ export function sanitizeCaption(text: string): string {
 }
 
 /** Sleep utility for rate limiting */
-export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 /** Initialize or get existing storage channel (auto-creates if not found) */
 export async function initializeStorageChannel(
