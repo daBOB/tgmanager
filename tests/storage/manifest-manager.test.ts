@@ -1,8 +1,8 @@
 // tests/storage/manifest-manager.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdir, rm } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { makeTempDir } from '../helpers/test-fixtures.js';
 import {
   createManifest,

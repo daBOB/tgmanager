@@ -1,6 +1,6 @@
 // src/commands/upload-storage-split-uploader.ts
 // Handles uploading large files by splitting into chunks and uploading each chunk
-import { basename, join } from 'path';
+import { basename, join } from 'node:path';
 import type { TelegramClient } from '../types/index.js';
 import type { StorageService } from '../storage/storage-service.js';
 import { splitFile, cleanupChunks } from '../storage/file-splitter.js';

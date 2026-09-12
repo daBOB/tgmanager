@@ -1,7 +1,7 @@
 // src/storage/checksum-utils.ts
-import { createHash } from 'crypto';
-import { createReadStream } from 'fs';
-import { pipeline } from 'stream/promises';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 
 export interface ChecksumResult {
   hash: string;

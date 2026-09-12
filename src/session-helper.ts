@@ -1,6 +1,6 @@
 import { StringSession, StoreSession } from 'telegram/sessions/index.js';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Session } from 'telegram/sessions/Abstract.js';
 import logger from './logger.js';
 import { isCompiledBinary } from './utils/runtime-paths.js';

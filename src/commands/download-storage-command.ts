@@ -1,7 +1,7 @@
 // src/commands/download-storage-command.ts
-import { existsSync } from 'fs';
-import { mkdir } from 'fs/promises';
-import { join, dirname } from 'path';
+import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import cliProgress from 'cli-progress';
 import type { TelegramClient } from '../types/index.js';
 import { StorageService } from '../storage/storage-service.js';

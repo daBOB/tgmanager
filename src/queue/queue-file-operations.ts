@@ -1,7 +1,7 @@
 // src/queue/queue-file-operations.ts
-import { homedir } from 'os';
-import { join } from 'path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync } from 'fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync } from 'node:fs';
 import logger from '../logger.js';
 import type { QueueFile } from './queue-types.js';
 

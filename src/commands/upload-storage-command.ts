@@ -1,8 +1,8 @@
 // src/commands/upload-storage-command.ts
 // Thin orchestrator: validates input, then delegates to the split or direct uploader
-import { stat } from 'fs/promises';
-import { existsSync } from 'fs';
-import { basename } from 'path';
+import { stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
 import type { TelegramClient } from '../types/index.js';
 import type { StorageService } from '../storage/storage-service.js';
 import { needsSplitting } from '../storage/file-splitter.js';

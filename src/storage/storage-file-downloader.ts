@@ -1,8 +1,8 @@
 // Download chunks and manifests from a Telegram storage channel, with hash verification and deletion.
 import type { Api } from 'telegram';
-import { mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import { dirname } from 'path';
+import { mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { TelegramClient } from '../types/index.js';
 import type { FileManifest } from './manifest-manager.js';
 import { verifyFile } from './checksum-utils.js';

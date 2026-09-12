@@ -1,11 +1,11 @@
 // Splits a large file into fixed-size chunks using an fd-based read loop with
 // retry on transient I/O errors (NFS, flaky drives). Computes per-chunk and
 // whole-file SHA-256 in a single pass.
-import { createWriteStream, existsSync } from 'fs';
-import { mkdir, stat, open } from 'fs/promises';
-import type { FileHandle } from 'fs/promises';
-import { join, basename } from 'path';
-import { createHash } from 'crypto';
+import { createWriteStream, existsSync } from 'node:fs';
+import { mkdir, stat, open } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
+import { join, basename } from 'node:path';
+import { createHash } from 'node:crypto';
 import type { FileManifest } from './manifest-manager.js';
 import {
   createManifest,

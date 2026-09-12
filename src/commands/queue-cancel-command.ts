@@ -1,5 +1,5 @@
 // src/commands/queue-cancel-command.ts
-import { basename } from 'path';
+import { basename } from 'node:path';
 import { listJobs, cancelJob } from '../queue/queue-manager.js';
 import { print, printError } from '../utils/console-output.js';
 

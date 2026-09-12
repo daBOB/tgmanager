@@ -2,7 +2,7 @@
 // per-command argument requirements. These sit directly on user input, so a
 // regression here is a security problem rather than a cosmetic one.
 import { describe, it, expect } from 'vitest';
-import { resolve } from 'path';
+import { resolve } from 'node:path';
 import {
   validatePath,
   validateChatId,

@@ -9,10 +9,10 @@
 // Everything here is deliberately dependency-free: the logger imports this
 // module while deciding where to put its log files, so it must not import the
 // logger back.
-import { dirname, join } from 'path';
-import { homedir, tmpdir } from 'os';
-import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync, accessSync, constants } from 'fs';
+import { dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { existsSync, mkdirSync, accessSync, constants } from 'node:fs';
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 

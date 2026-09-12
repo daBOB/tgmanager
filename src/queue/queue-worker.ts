@@ -1,6 +1,6 @@
 // src/queue/queue-worker.ts
-import { basename } from 'path';
-import { unlinkSync } from 'fs';
+import { basename } from 'node:path';
+import { unlinkSync } from 'node:fs';
 import type { TelegramClient } from '../types/index.js';
 import { uploadStorageCommand } from '../commands/upload-storage-command.js';
 import { StorageService } from '../storage/storage-service.js';

@@ -1,8 +1,8 @@
 // Handles the `upload` command: sends a single file, or every file in a
 // directory, straight to a chat (as opposed to the storage-channel commands).
-import { existsSync, statSync, rmSync, unlinkSync } from 'fs';
-import { readdir } from 'fs/promises';
-import { join, basename } from 'path';
+import { existsSync, statSync, rmSync, unlinkSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { join, basename } from 'node:path';
 import pLimit from 'p-limit';
 import type { TelegramClient } from 'telegram';
 import { Uploader } from '../Uploader.js';

@@ -1,5 +1,5 @@
-import { unlink } from 'fs/promises';
-import { basename, extname } from 'path';
+import { unlink } from 'node:fs/promises';
+import { basename, extname } from 'node:path';
 import { getSharp } from '../utils/sharp-loader.js';
 import logger from '../logger.js';
 import config from '../config.js';

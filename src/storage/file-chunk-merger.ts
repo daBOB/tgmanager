@@ -1,8 +1,8 @@
 // Merges chunks produced by file-chunk-splitter back into the original file
 // and verifies the resulting file's SHA-256 against the manifest's expected hash.
-import { createReadStream, createWriteStream, existsSync } from 'fs';
-import { unlink } from 'fs/promises';
-import { join } from 'path';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { FileManifest } from './manifest-manager.js';
 import type { SplitProgress } from './file-chunk-splitter.js';
 import logger from '../logger.js';

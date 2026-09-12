@@ -1,5 +1,5 @@
-import { stat } from 'fs/promises';
-import { basename, extname } from 'path';
+import { stat } from 'node:fs/promises';
+import { basename, extname } from 'node:path';
 import { Api } from 'telegram';
 import cliProgress from 'cli-progress';
 import logger, { logUpload } from './logger.js';

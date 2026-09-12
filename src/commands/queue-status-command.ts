@@ -1,5 +1,5 @@
 // src/commands/queue-status-command.ts
-import { basename } from 'path';
+import { basename } from 'node:path';
 import { listJobs } from '../queue/queue-manager.js';
 import type { QueueJob, QueueJobStatus } from '../queue/queue-types.js';
 import { print } from '../utils/console-output.js';

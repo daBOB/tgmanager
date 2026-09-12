@@ -8,7 +8,7 @@
 //
 // The lock is an O_EXCL lockfile holding the owner's PID, so a crashed holder
 // can be detected and cleared rather than wedging the queue forever.
-import { openSync, closeSync, writeSync, unlinkSync, readFileSync, mkdirSync, existsSync, statSync } from 'fs';
+import { openSync, closeSync, writeSync, unlinkSync, readFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import logger from '../logger.js';
 import { getQueueDir, getQueueFilePath } from './queue-file-operations.js';
 import { isProcessAlive } from '../utils/process-liveness.js';

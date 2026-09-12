@@ -1,8 +1,8 @@
 // src/storage/manifest-manager.ts
-import { writeFile, readFile, rename } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import { randomUUID } from 'crypto';
+import { writeFile, readFile, rename } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export interface ChunkInfo {
   index: number;

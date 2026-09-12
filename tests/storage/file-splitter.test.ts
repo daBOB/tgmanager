@@ -1,9 +1,9 @@
 // tests/storage/file-splitter.test.ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { writeFile, mkdir, rm } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import crypto from 'crypto';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import crypto from 'node:crypto';
 import {
   splitFile,
   mergeChunks,

@@ -1,6 +1,6 @@
 import winston from 'winston';
-import { join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
 import { getWritableDataDir } from './utils/runtime-paths.js';
 
 const logsDir = join(getWritableDataDir(), 'logs');

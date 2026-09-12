@@ -1,6 +1,6 @@
 // src/commands/upload-storage-direct-uploader.ts
 // Handles uploading small files directly as a single chunk (no splitting required)
-import { basename } from 'path';
+import { basename } from 'node:path';
 import type { StorageService } from '../storage/storage-service.js';
 import { createManifest } from '../storage/manifest-manager.js';
 import { hashFile } from '../storage/checksum-utils.js';

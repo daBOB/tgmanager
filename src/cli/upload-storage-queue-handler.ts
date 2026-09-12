@@ -1,5 +1,5 @@
-import { existsSync, statSync } from 'fs';
-import { posix, basename } from 'path';
+import { existsSync, statSync } from 'node:fs';
+import { posix, basename } from 'node:path';
 import logger from '../logger.js';
 import { walkDirectory } from '../utils/directory-walker.js';
 import { startClient } from './command-dispatcher.js';

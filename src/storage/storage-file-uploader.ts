@@ -1,8 +1,8 @@
 // Upload chunks and manifests to a Telegram storage channel with retry/resume support.
 import type { TelegramClient } from '../types/index.js';
-import { writeFile, unlink } from 'fs/promises';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { writeFile, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { FileManifest } from './manifest-manager.js';
 import { updateChunkMessageId, getChunksToUpload } from './manifest-manager.js';
 import { buildChunkCaption, sanitizeCaption } from './storage-channel-manager.js';

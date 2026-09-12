@@ -3,7 +3,7 @@
 // (a worker may already hold it), so two processes really do write this file
 // at the same time.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync, existsSync, writeFileSync, readFileSync } from 'fs';
+import { rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { makeTempDir } from '../helpers/test-fixtures.js';
 
 // The queue lives under $HOME/.tgmanager/queue, so each test gets its own HOME.
@@ -179,7 +179,7 @@ describe('queue file locking', () => {
 
   it('breaks a lock left behind by a dead process', async () => {
     const { addJob, getQueueFilePath, getQueueDir } = await queue();
-    const { mkdirSync } = await import('fs');
+    const { mkdirSync } = await import('node:fs');
 
     mkdirSync(getQueueDir(), { recursive: true });
     const lockPath = `${getQueueFilePath(ACCOUNT)}.lock`;

@@ -1,9 +1,9 @@
 import { TelegramClient } from 'telegram';
-import type { EventEmitter } from 'events';
-import input from 'input';
-import { existsSync, mkdirSync } from 'fs';
-import { join, resolve } from 'path';
-import { homedir } from 'os';
+import type { EventEmitter } from 'node:events';
+import { promptText } from '../utils/prompt-input.js';
+import { existsSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import config from '../config.js';
 import logger from '../logger.js';
 import { validateChatId, validateAccountName, validateCommand } from '../utils/validation.js';
@@ -58,7 +58,7 @@ export const startClient = async (account_name: string): Promise<TelegramClient>
     await client.start({
       phoneNumber: async () => phoneNumber,
       password: async () => password || '',
-      phoneCode: async () => await input.text('Please enter the code you received: '),
+      phoneCode: async () => await promptText('Please enter the code you received: '),
       onError: (err: Error) => {
         if (isAuthKeyDuplicatedError(err)) throw new AuthKeyDuplicatedError();
         logger.error('Authentication error', { error: err.message });

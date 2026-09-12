@@ -1,6 +1,6 @@
-import { basename } from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { basename } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import logger from '../logger.js';
 import config from '../config.js';
 import type { VideoInfo } from '../types/index.js';

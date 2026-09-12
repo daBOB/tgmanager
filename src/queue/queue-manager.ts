@@ -1,5 +1,5 @@
 // src/queue/queue-manager.ts
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import logger from '../logger.js';
 import type { QueueJob, QueueAddOptions } from './queue-types.js';
 import { readQueue, writeQueue, getQueueDir, getQueueFilePath } from './queue-file-operations.js';

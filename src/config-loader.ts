@@ -1,7 +1,7 @@
 import { config as dotenvConfig } from 'dotenv';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import logger from './logger.js';
 import { getBaseDirectory } from './utils/runtime-paths.js';
 

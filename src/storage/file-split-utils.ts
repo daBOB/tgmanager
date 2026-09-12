@@ -1,9 +1,9 @@
 // Shared helpers for chunk lifecycle: stream teardown, post-merge cleanup and
 // the chunk-size threshold check that decides whether a file needs splitting.
-import { existsSync } from 'fs';
-import type { WriteStream } from 'fs';
-import { unlink } from 'fs/promises';
-import { join } from 'path';
+import { existsSync } from 'node:fs';
+import type { WriteStream } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { FileManifest} from './manifest-manager.js';
 import { DEFAULT_CHUNK_SIZE } from './manifest-manager.js';
 import logger from '../logger.js';
