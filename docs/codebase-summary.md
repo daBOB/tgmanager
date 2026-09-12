@@ -68,13 +68,14 @@ bun run type-check
 bun run test           # vitest
 bun run test:coverage
 bun run lint
-bun run build:ts       # emit dist/
 bun run build-native   # single-file binaries for 4 targets
 bun run build-docker   # container image (keeps sharp working)
 ```
 
 CI runs type-check → test → compile → lint → audit, in that order: correctness
 gates before style ones, so a style failure can never mask a broken build.
+There is no JavaScript build step: Bun runs the TypeScript sources directly and
+`bun build --compile` produces the binaries, so `tsc` is only a type checker.
 
 ## Testing notes
 

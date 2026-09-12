@@ -23,7 +23,6 @@ A secure, efficient command-line tool for managing file uploads to Telegram chan
 
 - [Bun](https://bun.sh) 1.2 or higher — the runtime the CLI, tests, Docker image, and binaries all use
 - FFmpeg (for video metadata extraction via `ffprobe`)
-- Node.js 22 or higher — optional, only to run a compiled `dist/` build
 
 ### Setup
 
@@ -63,7 +62,6 @@ Examples below are written as `tgmanager`. Substitute whichever form you use:
 |---|---|---|
 | From source | `bun run src/index.ts` | Development, and the default way to use the tool |
 | Standalone binary | `./dist/uploader-linux` | Machines without Bun installed (`bun run build-native`) |
-| Compiled for Node | `node dist/index.js` | Node-only environments (`bun run build:ts` first) |
 
 A shell alias keeps the examples copy-pasteable:
 
@@ -86,8 +84,6 @@ alias tgmanager='bun run /path/to/tgmanager/src/index.ts'
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LOG_LEVEL` | Logging level (error, warn, info, debug) | `info` |
-| `MAX_CONCURRENT_UPLOADS` | Number of concurrent uploads | `1` |
-| `UPLOAD_TIMEOUT` | Upload timeout in milliseconds | `600000` |
 | `SESSION_DIR` | Directory for session storage | `sessions` (in project) |
 | `UPLOAD_DIR` | Default upload directory | `uploads` (in project) |
 | `TGMANAGER_CONFIG` | Path to a custom `.env` file | Auto-detected |
@@ -146,7 +142,7 @@ Upload a single file:
 tgmanager -a myaccount -c upload -i @mychannel -f /path/to/file.mp4
 ```
 
-Upload a directory (all files uploaded concurrently):
+Upload a directory (each file becomes a queue job, processed in order):
 ```bash
 tgmanager -a myaccount -c upload -i @mychannel -f /path/to/directory/
 ```
@@ -210,6 +206,21 @@ Filter by virtual path prefix:
 tgmanager -a myaccount -c list-storage --virtual-path /backups/
 ```
 
+#### `queue-status` / `queue-cancel` - Inspect and manage the queue
+
+Both `upload` and `upload-storage` enqueue their work before doing anything
+else, so every file is a durable job. See [Upload queue](#upload-queue).
+
+```bash
+tgmanager -a myaccount -c queue-status                  # everything, with a summary
+tgmanager -a myaccount -c queue-status --status failed  # just failures, with reasons
+tgmanager -a myaccount -c queue-status --limit 20       # newest 20
+tgmanager -a myaccount -c queue-cancel -n a3f9          # partial job id is enough
+```
+
+Neither needs the account lock or a Telegram connection, so both work while an
+upload is running.
+
 ### CLI Options
 
 | Option | Description | Required |
@@ -224,6 +235,11 @@ tgmanager -a myaccount -c list-storage --virtual-path /backups/
 | `--output-path <path>` | Output path for downloads | For `download-storage` |
 | `--storage-channel <id>` | Storage channel ID (auto-creates if omitted) | No |
 | `--force` | Force overwrite existing files | No |
+| `--wait` | Block until the queued upload finishes | No |
+| `--priority <n>` | Queue priority; higher runs first (default 0) | No |
+| `--at <when>` | Do not start before this time (ISO 8601) | No |
+| `--status <status>` | Filter `queue-status` by job status | No |
+| `--limit <n>` | Cap how many jobs `queue-status` prints | No |
 
 ### Available Commands
 
@@ -269,6 +285,36 @@ Logs are stored in the `logs/` directory:
 
 Log rotation is automatic after 10MB.
 
+## Upload queue
+
+Both `upload` and `upload-storage` enqueue their work *before* taking the
+account lock, then whichever process holds the lock drains the queue. There is
+no daemon: jobs move only while an upload command is running. But the queue is
+durable, so anything left behind is picked up by the next run.
+
+- **No other instance running** — your process takes the lock, becomes the
+  worker, and drains the queue until it is empty.
+- **Another instance already running** — your jobs join the queue and that
+  worker picks them up. You get `✓ Worker is active` and exit immediately. Pass
+  `--wait` to block until your own files are done instead.
+
+Because each file is its own job, a run killed part-way resumes rather than
+rescanning, and a failure is recorded rather than only logged:
+
+```bash
+tgmanager -a myaccount -c queue-status --status failed
+```
+
+Jobs are kept after they finish, so that stays useful long afterwards. A worker
+killed mid-upload leaves its job marked `processing`; the next run notices the
+dead process and returns the job to `pending` automatically.
+
+Ordering is by priority (descending), then oldest-first. A job given `--at` is
+not offered to a worker until that time has passed.
+
+The queue lives in `~/.tgmanager/queue.db`, one SQLite database shared by all
+accounts.
+
 ## Development
 
 ### Available Scripts
@@ -292,16 +338,14 @@ bun run test:coverage
 # Run ESLint
 bun run lint
 
-# Compile TypeScript to dist/ for Node-only environments
-bun run build:ts
-
 # Full build (dist/ + native binaries for all four targets)
 bun run build
 ```
 
 CI runs these gates in order of signal strength — `type-check`, `test`,
-`build:ts`, then `lint` — so a correctness failure is never masked by a style
-failure.
+`compile`, then `lint` — so a correctness failure is never masked by a style
+failure. `tsc` is only ever a type checker here; the binaries come from
+`bun build --compile`.
 
 ## Building Binaries
 
@@ -521,7 +565,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Technology Stack
 
 - **Language**: TypeScript 5.x with ES modules
-- **Runtime**: Node.js 22+
+- **Runtime**: Bun 1.2+
 - **Type Safety**: Full TypeScript support with strict mode
 - **Telegram API**: [GramJS](https://github.com/gram-js/gramjs)
 - **Image Processing**: [Sharp](https://sharp.pixelplumbing.com/)

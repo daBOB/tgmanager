@@ -6,11 +6,10 @@
     "module": "ESNext",
     "moduleResolution": "node",
     
-    // Output
-    "outDir": "./dist",
+    // No emit: Bun runs the TypeScript sources directly and `bun build
+    // --compile` produces the binaries, so tsc exists purely as a type checker.
+    "noEmit": true,
     "rootDir": "./src",
-    "removeComments": true,
-    "sourceMap": true,
     
     // Type Checking
     "strict": true,
@@ -32,11 +31,6 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
-    
-    // Emit
-    "declaration": true,
-    "declarationMap": true,
-    "inlineSources": true,
     
     // Advanced
     "skipLibCheck": true,

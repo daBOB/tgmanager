@@ -29,8 +29,10 @@ jobs:
       - name: Test
         run: bun run test
 
-      - name: Compile
-        run: bun run build:ts
+      # Verifies the distributed artifact actually builds, which type-check
+      # alone does not: bundling can fail on things tsc is happy with.
+      - name: Compile binary
+        run: bun run compile
 
       - name: Lint
         run: bun run lint

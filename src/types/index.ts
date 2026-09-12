@@ -10,8 +10,6 @@ export interface AccountConfig {
 
 export interface AppConfig {
   logLevel: string;
-  maxConcurrentUploads: number;
-  uploadTimeout: number;
   sessionDir: string;
   uploadDir: string;
 }
