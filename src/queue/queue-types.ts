@@ -111,8 +111,13 @@ export interface QueueAddOptions {
 
 /** Filters accepted when listing jobs. */
 export interface QueueListFilter {
-  /** Restrict to one status; omit for all. */
-  status?: QueueJobStatus;
+  /** Restrict to one status or several; omit for all. */
+  status?: QueueJobStatus | QueueJobStatus[];
   /** Cap the number of rows returned. */
   limit?: number;
+  /**
+   * 'recent' (default) is newest-first, for reading history.
+   * 'queue' matches the order a worker will claim in, for seeing what runs next.
+   */
+  order?: 'recent' | 'queue';
 }

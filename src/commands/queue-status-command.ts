@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import { listJobs, countJobsByStatus } from '../queue/queue-manager.js';
 import type { QueueListFilter } from '../queue/queue-types.js';
 import { print } from '../utils/console-output.js';
-import { buildSummaryLines } from './queue-status-summary.js';
+import { buildSummaryLines, outstandingCount, OUTSTANDING } from './queue-status-summary.js';
 
 /**
  * Rows printed when the caller does not ask for a specific number.
@@ -12,6 +12,21 @@ import { buildSummaryLines } from './queue-status-summary.js';
  * part — the summary — off the screen. `--limit` overrides this.
  */
 export const DEFAULT_STATUS_LIMIT = 50;
+
+/**
+ * Pick what to list when the caller named no status.
+ *
+ * With work outstanding the useful view is that work, in the order it will run.
+ * With none, the useful view is recent history — and the headline has already
+ * said the queue is clear, so the rows cannot be mistaken for a backlog.
+ */
+function withDefaultView(filter: QueueListFilter, counts: Record<string, number>): QueueListFilter {
+  if (filter.status) return filter;
+
+  return outstandingCount(counts) > 0
+    ? { ...filter, status: OUTSTANDING, order: 'queue' }
+    : filter;
+}
 
 /** Width of the File column; names are truncated to two less for padding. */
 const FILE_COLUMN_WIDTH = 34;
@@ -23,17 +38,21 @@ const FILE_COLUMN_WIDTH = 34;
  * @returns true on success, false on error
  */
 export function queueStatusCommand(account: string, filter: QueueListFilter = {}): boolean {
-  const limit = filter.limit ?? DEFAULT_STATUS_LIMIT;
-  const jobs = listJobs(account, { ...filter, limit });
   const counts = countJobsByStatus(account);
+  const effective = withDefaultView(filter, counts);
+  const limit = effective.limit ?? DEFAULT_STATUS_LIMIT;
+  const jobs = listJobs(account, { ...effective, limit });
+  const { headline, summary, hint } = buildSummaryLines(jobs.length, counts, effective);
+
+  print(`\nUpload Queue (account: ${account})`);
+  print(headline);
 
   if (jobs.length === 0) {
-    const scope = filter.status ? ` with status '${filter.status}'` : '';
-    print(`No jobs${scope} for account: ${account}`);
+    print('');
     return true;
   }
 
-  print(`\nUpload Queue (account: ${account})\n`);
+  print('');
 
   // Column headers
   const headers = {
@@ -60,7 +79,6 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
     print(`${num}${id}${fileName}${status}${created}`);
   });
 
-  const { summary, hint } = buildSummaryLines(jobs.length, counts, filter, DEFAULT_STATUS_LIMIT);
   print(`\n${summary}`);
   if (hint) print(hint);
   print('');

@@ -182,11 +182,15 @@ export function listJobs(account: string, filter: QueueListFilter = {}): QueueJo
   const params: unknown[] = [account];
 
   if (filter.status) {
-    clauses.push('status = ?');
-    params.push(filter.status);
+    const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+    clauses.push(`status IN (${statuses.map(() => '?').join(',')})`);
+    params.push(...statuses);
   }
 
-  let sql = `SELECT * FROM jobs WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC`;
+  // Outstanding work is most useful in the order it will actually run; history
+  // is most useful newest-first.
+  const ordering = filter.order === 'queue' ? CLAIM_ORDER : 'ORDER BY created_at DESC';
+  let sql = `SELECT * FROM jobs WHERE ${clauses.join(' AND ')} ${ordering}`;
   if (filter.limit !== undefined) {
     sql += ' LIMIT ?';
     params.push(filter.limit);
