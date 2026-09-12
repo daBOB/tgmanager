@@ -214,7 +214,7 @@ function detectProjectType(configOverride) {
 function detectPackageManager(configOverride) {
   if (configOverride && configOverride !== 'auto') return configOverride;
 
-  if (fs.existsSync('bun.lockb')) return 'bun';
+  if (fs.existsSync('bun.lock') || fs.existsSync('bun.lockb')) return 'bun';
   if (fs.existsSync('pnpm-lock.yaml')) return 'pnpm';
   if (fs.existsSync('yarn.lock')) return 'yarn';
   if (fs.existsSync('package-lock.json')) return 'npm';

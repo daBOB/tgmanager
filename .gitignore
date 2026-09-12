@@ -33,7 +33,6 @@ lerna-debug.log*
 
 # Build output
 dist/
-dist-pkg/
 build/
 
 # Large binary/media files

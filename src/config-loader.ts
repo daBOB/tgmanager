@@ -28,7 +28,9 @@ export const loadConfig = (): void => {
   for (const envPath of possibleEnvPaths) {
     if (existsSync(envPath)) {
       try {
-        dotenvConfig({ path: envPath });
+        // quiet: dotenv v17 otherwise prints a promo banner to stdout on every
+        // load, which corrupts piped CLI output. Load results are logged below.
+        dotenvConfig({ path: envPath, quiet: true });
         logger.info(`Configuration loaded from: ${envPath}`);
         loaded = true;
         break;

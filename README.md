@@ -21,10 +21,9 @@ A secure, efficient command-line tool for managing file uploads to Telegram chan
 
 ### Prerequisites
 
-- Node.js 22 or higher
-- FFmpeg (for video processing)
-- Sharp dependencies (automatic with `npm install`)
-- TypeScript (installed as dev dependency)
+- [Bun](https://bun.sh) 1.2 or higher — the runtime the CLI, tests, Docker image, and binaries all use
+- FFmpeg (for video metadata extraction via `ffprobe`)
+- Node.js 22 or higher — optional, only to run a compiled `dist/` build
 
 ### Setup
 
@@ -36,7 +35,7 @@ cd tgmanager
 
 2. Install dependencies:
 ```bash
-npm install
+bun install
 ```
 
 3. Create your environment file:
@@ -53,9 +52,23 @@ YOUR_ACCOUNT_PHONE=+1234567890
 YOUR_ACCOUNT_PASSWORD=your_password_here
 ```
 
-5. Build the TypeScript code:
+That is the whole setup — Bun runs the TypeScript sources directly, so no build
+step is required before using the CLI.
+
+### How to run it
+
+Examples below are written as `tgmanager`. Substitute whichever form you use:
+
+| Form | Command | When |
+|---|---|---|
+| From source | `bun run src/index.ts` | Development, and the default way to use the tool |
+| Standalone binary | `./dist/uploader-linux` | Machines without Bun installed (`bun run build-native`) |
+| Compiled for Node | `node dist/index.js` | Node-only environments (`bun run build:ts` first) |
+
+A shell alias keeps the examples copy-pasteable:
+
 ```bash
-npm run build:ts
+alias tgmanager='bun run /path/to/tgmanager/src/index.ts'
 ```
 
 ## Configuration
@@ -109,14 +122,14 @@ All original flag-based syntax remains fully supported.
 
 ### Running the Application
 
-For development (with TypeScript via tsx):
+Directly from source:
 ```bash
-npm run dev -- -a your_account -c upload -i @channel_username -f /path/to/file.mp4
+bun run src/index.ts -a your_account -c upload -i @channel_username -f /path/to/file.mp4
 ```
 
-For production (compiled JavaScript):
+With auto-restart while editing:
 ```bash
-npm start -- -a your_account -c upload -i @channel_username -f /path/to/file.mp4
+bun run dev -- -a your_account -c upload -i @channel_username -f /path/to/file.mp4
 ```
 
 Or using standalone binaries (see [Building Binaries](#building-binaries)):
@@ -130,28 +143,28 @@ Or using standalone binaries (see [Building Binaries](#building-binaries)):
 
 Upload a single file:
 ```bash
-node dist/index.js -a myaccount -c upload -i @mychannel -f /path/to/file.mp4
+tgmanager -a myaccount -c upload -i @mychannel -f /path/to/file.mp4
 ```
 
 Upload a directory (all files uploaded concurrently):
 ```bash
-node dist/index.js -a myaccount -c upload -i @mychannel -f /path/to/directory/
+tgmanager -a myaccount -c upload -i @mychannel -f /path/to/directory/
 ```
 
 Upload with source deletion after success:
 ```bash
-node dist/index.js -a myaccount -c upload -i @mychannel -f video.mp4 --delete-source
+tgmanager -a myaccount -c upload -i @mychannel -f video.mp4 --delete-source
 ```
 
 Upload to a specific chat ID:
 ```bash
-node dist/index.js -a myaccount -c upload -i -1001234567890 -f document.pdf
+tgmanager -a myaccount -c upload -i -1001234567890 -f document.pdf
 ```
 
 #### `create` - Create a new Telegram channel
 
 ```bash
-node dist/index.js -a myaccount -c create -n "My New Channel"
+tgmanager -a myaccount -c create -n "My New Channel"
 ```
 
 #### `upload-storage` - Upload a file to Telegram storage
@@ -159,12 +172,12 @@ node dist/index.js -a myaccount -c create -n "My New Channel"
 Uploads a file to a dedicated storage channel. Large files are automatically split into chunks. Files are identified by a virtual path (like a filesystem).
 
 ```bash
-node dist/index.js -a myaccount -c upload-storage -f /path/to/largefile.zip --virtual-path /backups/largefile.zip
+tgmanager -a myaccount -c upload-storage -f /path/to/largefile.zip --virtual-path /backups/largefile.zip
 ```
 
 With a specific storage channel:
 ```bash
-node dist/index.js -a myaccount -c upload-storage -f data.db --virtual-path /databases/data.db --storage-channel -1001234567890
+tgmanager -a myaccount -c upload-storage -f data.db --virtual-path /databases/data.db --storage-channel -1001234567890
 ```
 
 #### `download-storage` - Download a file from Telegram storage
@@ -172,29 +185,29 @@ node dist/index.js -a myaccount -c upload-storage -f data.db --virtual-path /dat
 Downloads a previously stored file by its virtual path. Chunks are downloaded with retry logic and merged automatically.
 
 ```bash
-node dist/index.js -a myaccount -c download-storage --virtual-path /backups/largefile.zip
+tgmanager -a myaccount -c download-storage --virtual-path /backups/largefile.zip
 ```
 
 Download to a specific location:
 ```bash
-node dist/index.js -a myaccount -c download-storage --virtual-path /backups/largefile.zip --output-path /tmp/restored.zip
+tgmanager -a myaccount -c download-storage --virtual-path /backups/largefile.zip --output-path /tmp/restored.zip
 ```
 
 Force overwrite existing file:
 ```bash
-node dist/index.js -a myaccount -c download-storage --virtual-path /backups/largefile.zip --force
+tgmanager -a myaccount -c download-storage --virtual-path /backups/largefile.zip --force
 ```
 
 #### `list-storage` - List files in Telegram storage
 
 List all stored files:
 ```bash
-node dist/index.js -a myaccount -c list-storage
+tgmanager -a myaccount -c list-storage
 ```
 
 Filter by virtual path prefix:
 ```bash
-node dist/index.js -a myaccount -c list-storage --virtual-path /backups/
+tgmanager -a myaccount -c list-storage --virtual-path /backups/
 ```
 
 ### CLI Options
@@ -261,30 +274,34 @@ Log rotation is automatic after 10MB.
 ### Available Scripts
 
 ```bash
-# Development with hot reload
-npm run dev
+# Run from source with auto-restart on change
+bun run dev
 
-# Build TypeScript to JavaScript
-npm run build:ts
+# Type checking (the correctness gate; no output emitted)
+bun run type-check
 
-# Type checking without building
-npm run type-check
-
-# Run ESLint
-npm run lint
-
-# Run tests
-npm test
+# Run tests (vitest — note `bun run test`, not `bun test`)
+bun run test
 
 # Run tests in watch mode
-npm run test:watch
+bun run test:watch
 
-# Full build (TypeScript + native binaries + Docker)
-npm run build
+# Run tests with coverage
+bun run test:coverage
 
-# Start production version
-npm start
+# Run ESLint
+bun run lint
+
+# Compile TypeScript to dist/ for Node-only environments
+bun run build:ts
+
+# Full build (dist/ + native binaries for all four targets)
+bun run build
 ```
+
+CI runs these gates in order of signal strength — `type-check`, `test`,
+`build:ts`, then `lint` — so a correctness failure is never masked by a style
+failure.
 
 ## Building Binaries
 
@@ -349,21 +366,22 @@ If a storage upload is interrupted, re-running the same command will skip alread
 
 ### Examples
 
-Below are practical workflows for managing files with Telegram storage. All examples use `node dist/index.js` — replace with `./uploader-linux` (or `npm start --`) if using binaries or production mode.
+Below are practical workflows for managing files with Telegram storage. They use
+the `tgmanager` shorthand described in [How to run it](#how-to-run-it).
 
 #### Back up a database
 
 ```bash
 # Upload today's database dump
-node dist/index.js -a myaccount -c upload-storage \
+tgmanager -a myaccount -c upload-storage \
   -f /var/backups/postgres-2026-02-05.sql.gz \
   --virtual-path /backups/db/postgres-2026-02-05.sql.gz
 
 # List all database backups
-node dist/index.js -a myaccount -c list-storage --virtual-path /backups/db/
+tgmanager -a myaccount -c list-storage --virtual-path /backups/db/
 
 # Restore a specific backup
-node dist/index.js -a myaccount -c download-storage \
+tgmanager -a myaccount -c download-storage \
   --virtual-path /backups/db/postgres-2026-02-05.sql.gz \
   --output-path /tmp/restore.sql.gz
 ```
@@ -372,16 +390,16 @@ node dist/index.js -a myaccount -c download-storage \
 
 ```bash
 # Upload a large video (auto-splits if it exceeds Telegram's limit)
-node dist/index.js -a myaccount -c upload-storage \
+tgmanager -a myaccount -c upload-storage \
   -f ~/Videos/recording-4k.mkv \
   --virtual-path /videos/recording-4k.mkv \
   --delete-source
 
 # Verify it's stored
-node dist/index.js -a myaccount -c list-storage --virtual-path /videos/
+tgmanager -a myaccount -c list-storage --virtual-path /videos/
 
 # Download it later on another machine
-node dist/index.js -a myaccount -c download-storage \
+tgmanager -a myaccount -c download-storage \
   --virtual-path /videos/recording-4k.mkv \
   --output-path ~/Downloads/recording-4k.mkv
 ```
@@ -390,14 +408,14 @@ node dist/index.js -a myaccount -c download-storage \
 
 ```bash
 # Upload multiple project archives with a folder structure
-node dist/index.js -a myaccount -c upload-storage \
+tgmanager -a myaccount -c upload-storage \
   -f ./project-v1.tar.gz --virtual-path /archives/myapp/v1.0.0.tar.gz
 
-node dist/index.js -a myaccount -c upload-storage \
+tgmanager -a myaccount -c upload-storage \
   -f ./project-v2.tar.gz --virtual-path /archives/myapp/v2.0.0.tar.gz
 
 # List only files under /archives/myapp/
-node dist/index.js -a myaccount -c list-storage --virtual-path /archives/myapp/
+tgmanager -a myaccount -c list-storage --virtual-path /archives/myapp/
 ```
 
 #### Use a dedicated storage channel
@@ -406,16 +424,16 @@ By default, TGManager auto-creates a channel. If you want to use a specific chan
 
 ```bash
 # Upload to a specific channel
-node dist/index.js -a myaccount -c upload-storage \
+tgmanager -a myaccount -c upload-storage \
   -f ./report.pdf \
   --virtual-path /work/reports/q1-2026.pdf \
   --storage-channel -1001234567890
 
 # List and download from the same channel
-node dist/index.js -a myaccount -c list-storage \
+tgmanager -a myaccount -c list-storage \
   --storage-channel -1001234567890
 
-node dist/index.js -a myaccount -c download-storage \
+tgmanager -a myaccount -c download-storage \
   --virtual-path /work/reports/q1-2026.pdf \
   --storage-channel -1001234567890
 ```
@@ -424,13 +442,13 @@ node dist/index.js -a myaccount -c download-storage \
 
 ```bash
 # Start uploading a 10 GB file — gets interrupted at 60%
-node dist/index.js -a myaccount -c upload-storage \
+tgmanager -a myaccount -c upload-storage \
   -f ~/iso/ubuntu-server.iso \
   --virtual-path /iso/ubuntu-server.iso
 # ^C (interrupted)
 
 # Re-run the exact same command — skips already uploaded chunks
-node dist/index.js -a myaccount -c upload-storage \
+tgmanager -a myaccount -c upload-storage \
   -f ~/iso/ubuntu-server.iso \
   --virtual-path /iso/ubuntu-server.iso
 # Resuming upload: 6/10 chunks already uploaded, uploading remaining 4...
@@ -440,18 +458,18 @@ node dist/index.js -a myaccount -c upload-storage \
 
 ```bash
 # First download
-node dist/index.js -a myaccount -c download-storage \
+tgmanager -a myaccount -c download-storage \
   --virtual-path /backups/db/latest.sql.gz \
   --output-path ./latest.sql.gz
 
 # Download again — fails because file already exists
-node dist/index.js -a myaccount -c download-storage \
+tgmanager -a myaccount -c download-storage \
   --virtual-path /backups/db/latest.sql.gz \
   --output-path ./latest.sql.gz
 # Error: Output file already exists. Use --force to overwrite.
 
 # Force overwrite
-node dist/index.js -a myaccount -c download-storage \
+tgmanager -a myaccount -c download-storage \
   --virtual-path /backups/db/latest.sql.gz \
   --output-path ./latest.sql.gz \
   --force

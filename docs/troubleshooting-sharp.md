@@ -1,76 +1,58 @@
-# Sharp Package Fix for Binary Distribution
+# Sharp and image resizing
 
-## Problem
-The `sharp` package was failing to load in the packaged binary with the error:
-```
-Cannot find package 'sharp' imported from /snapshot/tgmanager/dist-pkg/bundled.cjs
-```
+`sharp` is a native module: it ships a platform-specific `.node` binding rather
+than plain JavaScript. That makes it the one dependency whose availability
+depends on *how* TGManager was built and where it runs.
 
-This is a common issue when using `pkg` to create standalone binaries with native modules like `sharp`.
+Image resizing is treated as optional throughout. When the binding cannot be
+loaded, uploads continue as ordinary document uploads instead of failing.
 
-## Root Cause
-1. `sharp` is a native module with platform-specific binaries
-2. The original build process marked `sharp` as external, expecting it to be available at runtime
-3. In the pkg binary environment, external modules aren't accessible in the same way
+## Where resizing works
 
-## Solutions Implemented
+| Distribution | Resizing | Why |
+|---|---|---|
+| `bun run src/index.ts` (source) | ✅ | Real `node_modules`, binding resolves for the host platform |
+| Docker image (`bun run build-docker`) | ✅ | The image installs dependencies for its own platform |
+| Standalone binary (`bun run build-native`) | ❌ | `bun build --compile` cannot embed a native `.node` binding |
 
-### 1. Removed Sharp from External Dependencies
-- Modified `scripts/bundle-for-pkg.cjs` to allow esbuild to bundle `sharp`
-- This allows the sharp module to be included in the bundled output
+If you need resizing on a machine without a toolchain, use the Docker image
+rather than the single-file binary.
 
-### 2. Robust Sharp Loading with Fallbacks
-- Created `src/utils/sharp-loader.ts` with multiple loading strategies:
-  - Dynamic import (primary method)
-  - CommonJS require (fallback)
-  - Multiple path attempts (for different environments)
-- Handles different module export patterns (default, named exports, nested properties)
-- Validates that the loaded module is actually a function before using it
-- Graceful degradation when sharp isn't available
+## How the fallback works
 
-### 3. Fixed "sharp is not a function" Error
-- Added proper handling for different module export structures in bundled environments
-- Checks for `sharpModule.default`, `sharpModule.sharp`, and other common patterns
-- Validates the loaded module is callable before attempting to use it
+`src/utils/sharp-loader.ts` owns the entire decision:
 
-### 4. Improved Error Handling
-- Modified `src/Uploader.ts` to handle sharp loading failures gracefully
-- Falls back to regular document upload when image processing isn't available
-- Provides clear logging about what's happening
+- The import is attempted lazily, on first use, not at startup — so a missing
+  binding never delays or breaks CLI commands that touch no images.
+- The result is cached after the first attempt, **including failure**, so a
+  broken install costs one failed import per run rather than one per file.
+- `getSharp()` resolves to `null` when the module is unavailable. Every caller
+  is typed against that and falls back to a document upload.
 
-## Changes Made
+The consequence: a missing `sharp` produces one `warn` line
+(`Sharp unavailable — image resizing disabled for this run`) and otherwise
+degrades silently. Uploads still succeed; the images just are not resized to
+Telegram's dimension limits first.
 
-### Files Modified:
-1. `scripts/bundle-for-pkg.cjs` - Removed sharp from external dependencies
-2. `src/Uploader.ts` - Updated to use robust sharp loader with fallbacks
-3. `package.json` - Updated build script to use npx pkg
-4. `src/utils/sharp-loader.ts` - New robust sharp loading utility
+## Diagnosing a failed load
 
-### Key Benefits:
-- **Graceful Degradation**: App continues to work even if sharp fails to load
-- **Better Logging**: Clear messages about what's happening with image processing
-- **Multiple Fallbacks**: Several strategies to load sharp in different environments
-- **Maintained Functionality**: Image processing still works when sharp is available
+Run with debug logging and look for the loader's own lines:
 
-## Testing
-The fix has been tested and the binary now:
-1. Starts successfully without sharp errors
-2. Properly loads and validates the sharp module
-3. Handles the "sharp is not a function" error by checking module structure
-4. Provides helpful logging when sharp isn't available or fails to load
-5. Falls back to document upload for images when processing fails
-6. Maintains full functionality when sharp loads successfully
-
-## Common Issues Fixed
-- ✅ "Cannot find package 'sharp'" - Fixed by bundling sharp instead of treating as external
-- ✅ "sharp is not a function" - Fixed by proper module export handling and validation
-- ✅ Binary crashes on image processing - Fixed with graceful fallbacks
-- ✅ No feedback when sharp fails - Fixed with detailed logging
-
-## Usage
-Use the rebuilt binaries as before:
 ```bash
-./dist/uploader-linux -a account_name -c upload -i chat_id -f /path/to/images/
+LOG_LEVEL=debug bun run src/index.ts -a myaccount -c upload -i @channel -f image.jpg
 ```
 
-If sharp isn't available, you'll see a warning log message, but the upload will continue as a regular document upload instead of failing completely.
+- `Sharp loaded` — the binding resolved; resizing is active.
+- `Sharp unavailable — image resizing disabled for this run` — the attached
+  `error` field carries the underlying import failure.
+
+Common causes, in order of likelihood:
+
+1. **Running a standalone binary.** Expected, not a bug — see the table above.
+2. **Platform binding not installed.** The `@img/sharp-*` packages are
+   `optionalDependencies`; an install that skipped optional deps
+   (`--no-optional`, or a locked-down CI) leaves no binding. Reinstall with
+   optional dependencies enabled.
+3. **Architecture mismatch.** A `node_modules` tree copied between platforms
+   (for example, an x64 tree mounted into an arm64 container) carries the wrong
+   binding. Install inside the target platform instead of copying.
