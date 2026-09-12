@@ -1,8 +1,9 @@
 // src/commands/queue-status-command.ts
 import { basename } from 'node:path';
 import { listJobs, countJobsByStatus } from '../queue/queue-manager.js';
-import type { QueueJobStatus, QueueListFilter } from '../queue/queue-types.js';
+import type { QueueListFilter } from '../queue/queue-types.js';
 import { print } from '../utils/console-output.js';
+import { buildSummaryLines } from './queue-status-summary.js';
 
 /**
  * Rows printed when the caller does not ask for a specific number.
@@ -59,23 +60,9 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
     print(`${num}${id}${fileName}${status}${created}`);
   });
 
-  // Counts come from the whole history rather than the rows just printed, so a
-  // --status or --limit view still shows what else exists.
-  const order: QueueJobStatus[] = ['processing', 'pending', 'completed', 'failed', 'cancelled'];
-  const summary = order
-    .filter(status => (counts[status] ?? 0) > 0)
-    .map(status => `${counts[status]!} ${status}`)
-    .join(', ');
-
-  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-  const shown = jobs.length === total ? '' : `showing ${jobs.length} of `;
-  print(`\nSummary: ${shown}${total} jobs (${summary})`);
-
-  // Only when the *default* cap hid rows: someone who passed --limit already
-  // knows they asked for a subset.
-  if (filter.limit === undefined && jobs.length < total) {
-    print(`Showing the newest ${DEFAULT_STATUS_LIMIT}. Use --limit <n> for more, or --status <status> to filter.`);
-  }
+  const { summary, hint } = buildSummaryLines(jobs.length, counts, filter, DEFAULT_STATUS_LIMIT);
+  print(`\n${summary}`);
+  if (hint) print(hint);
   print('');
 
   return true;
