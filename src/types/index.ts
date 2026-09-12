@@ -81,6 +81,10 @@ export interface CommandOptions {
   filePath?: string;
   deleteSource?: boolean;
   name?: string;
+  priority?: number;
+  at?: string;
+  status?: string;
+  limit?: number;
   virtualPath?: string;
   outputPath?: string;
   storageChannel?: string;

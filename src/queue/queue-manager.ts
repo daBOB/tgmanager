@@ -1,54 +1,36 @@
-// src/queue/queue-manager.ts
+// Upload queue operations, backed by SQLite.
+//
+// Every mutation is a single statement (or one transaction), so there is no
+// read-modify-write window for a concurrent process to fall into — the
+// lockfile the JSON implementation needed is gone.
 import { randomUUID } from 'node:crypto';
 import logger from '../logger.js';
-import type { QueueJob, QueueAddOptions } from './queue-types.js';
-import { readQueue, writeQueue, getQueueDir, getQueueFilePath } from './queue-file-operations.js';
-import { withQueueLock } from './queue-file-lock.js';
-import {
-  recoverStaleJobsInQueue,
-  cleanupCompletedJobsInQueue,
-  pollJobStatusUntilDone,
-} from './queue-process-utils.js';
+import type { QueueJob, QueueAddOptions, QueueListFilter } from './queue-types.js';
+import { getDb, getQueueDir, getQueueDbPath, inTransaction } from './queue-database.js';
+import { rowToJob, jobToInsertParams, asJobRow, asJobRows, asCount } from './queue-job-row-mapper.js';
+import { isProcessAlive } from '../utils/process-liveness.js';
+import { pollJobStatusUntilDone } from './queue-process-utils.js';
 
-// Re-export file operation functions for convenience
-export { getQueueDir, getQueueFilePath };
+export { getQueueDir, getQueueDbPath };
 
-const MAX_QUEUE_SIZE = 1000;
+const INSERT_SQL = `
+  INSERT INTO jobs (id, account, file_path, virtual_path, storage_channel_id,
+                    delete_source, status, priority, scheduled_at, created_at,
+                    started_at, completed_at, error, worker_pid)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 /**
- * Apply a change to one job as a single locked read-modify-write cycle.
+ * Ordering shared by claiming and by queue position, so the two agree.
  *
- * Every mutation must re-read the queue *inside* the lock — the CLI and the
- * worker both write this file concurrently, so anything read beforehand may
- * already be out of date.
- *
- * @param account - Account identifier
- * @param jobId - Job to modify
- * @param action - Verb used in log messages when the job can't be modified
- * @param mutate - Applies the change; return false to abort without writing
- * @returns The job as modified, or null if it was missing or `mutate` declined
+ * rowid breaks ties: created_at has millisecond resolution, and enqueueing a
+ * directory inserts thousands of jobs well inside one millisecond, which would
+ * otherwise leave their relative order undefined. rowid increases with
+ * insertion, so it restores FIFO within a batch.
  */
-function mutateJob(
-  account: string,
-  jobId: string,
-  action: string,
-  mutate: (job: QueueJob) => boolean
-): QueueJob | null {
-  return withQueueLock(account, () => {
-    const queue = readQueue(account);
-    const job = queue.jobs.find(j => j.id === jobId);
+const CLAIM_ORDER = 'ORDER BY priority DESC, created_at ASC, rowid ASC';
 
-    if (!job) {
-      logger.warn(`Cannot ${action} job - not found`, { account, jobId });
-      return null;
-    }
-
-    if (!mutate(job)) return null;
-
-    writeQueue(account, queue);
-    return job;
-  });
-}
+/** Only jobs whose scheduled time has arrived are eligible. */
+const ELIGIBLE = `status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= ?)`;
 
 /** Build a pending job record with a fresh ID and timestamp. */
 function buildJob(options: QueueAddOptions): QueueJob {
@@ -59,6 +41,8 @@ function buildJob(options: QueueAddOptions): QueueJob {
     storageChannelId: options.storageChannelId,
     deleteSource: options.deleteSource ?? false,
     status: 'pending',
+    priority: options.priority ?? 0,
+    scheduledAt: options.scheduledAt ?? null,
     createdAt: new Date().toISOString(),
     startedAt: null,
     completedAt: null,
@@ -67,225 +51,231 @@ function buildJob(options: QueueAddOptions): QueueJob {
   };
 }
 
-/**
- * Add a single job to the queue.
- * @returns Created job
- * @throws If the queue is full (MAX_QUEUE_SIZE active jobs)
- */
+/** Add a single job to the queue. */
 export function addJob(account: string, options: QueueAddOptions): QueueJob {
-  const [job] = addJobs(account, [options]);
-  return job!;
+  return addJobs(account, [options])[0]!;
 }
 
 /**
- * Add several jobs in one locked read-modify-write.
+ * Add several jobs at once.
  *
- * Queuing a directory one job at a time rewrites the whole queue document per
- * file, which is quadratic in the number of entries and takes the lock N times.
- *
- * @throws If the queue would exceed MAX_QUEUE_SIZE active jobs
+ * Wrapped in a transaction so a directory enqueue either lands whole or not at
+ * all, and so the inserts cost one fsync rather than one each.
  */
 export function addJobs(account: string, optionsList: QueueAddOptions[]): QueueJob[] {
-  return withQueueLock(account, () => {
-    const queue = readQueue(account);
+  const db = getDb();
+  const jobs = optionsList.map(buildJob);
+  const insert = db.prepare(INSERT_SQL);
 
-    const activeJobs = queue.jobs.filter(j => j.status === 'pending' || j.status === 'processing');
-    if (activeJobs.length + optionsList.length > MAX_QUEUE_SIZE) {
-      throw new Error(`Queue is full (${MAX_QUEUE_SIZE} active jobs). Wait for jobs to complete.`);
-    }
-
-    const jobs = optionsList.map(buildJob);
-    queue.jobs.push(...jobs);
-    writeQueue(account, queue);
-
-    logger.info(`Added ${jobs.length} job(s) to queue`, {
-      account,
-      jobIds: jobs.map(j => j.id),
-    });
-
-    return jobs;
+  inTransaction(db, () => {
+    for (const job of jobs) insert.run(...(jobToInsertParams(account, job) as never[]));
   });
+
+  logger.info('Queued jobs', { account, count: jobs.length });
+  return jobs;
 }
 
 /**
- * Get the next pending job from the queue, sorted by creation time.
- * Read-only: the returned job is a snapshot and may be claimed by another
- * process before this one gets to it, which `claimJob` detects.
- * @param account - Account identifier
- * @returns Next pending job or null if none available
+ * The next job a worker should run: highest priority, then oldest, skipping
+ * anything scheduled for later.
+ *
+ * Read-only — the job may be claimed by another process before this one acts,
+ * which `claimJob` detects.
  */
 export function getNextPendingJob(account: string): QueueJob | null {
-  const queue = readQueue(account);
-  const pendingJobs = queue.jobs
-    .filter(job => job.status === 'pending')
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const row = asJobRow(getDb()
+    .prepare(`SELECT * FROM jobs WHERE account = ? AND ${ELIGIBLE} ${CLAIM_ORDER} LIMIT 1`)
+    .get(account, new Date().toISOString()));
 
-  return pendingJobs[0] || null;
+  return row ? rowToJob(row) : null;
 }
 
 /**
- * Claim a job for processing by setting its status and worker PID.
- * The pending check and the write happen under one lock, so exactly one worker
- * can win the claim.
- * @param account - Account identifier
- * @param jobId - Job ID to claim
- * @returns Claimed job or null if already claimed
+ * Take ownership of a job for this process.
+ *
+ * The status guard in the WHERE clause is what makes the claim exclusive: two
+ * workers racing for the same job both run the UPDATE, but only the first
+ * matches a pending row. The loser changes nothing and is told so.
  */
 export function claimJob(account: string, jobId: string): QueueJob | null {
-  const job = mutateJob(account, jobId, 'claim', j => {
-    if (j.status !== 'pending') {
-      logger.warn(`Cannot claim job - not pending`, { account, jobId, status: j.status });
-      return false;
-    }
-    j.status = 'processing';
-    j.workerPid = process.pid;
-    j.startedAt = new Date().toISOString();
-    return true;
-  });
+  const db = getDb();
 
-  if (job) logger.info(`Claimed job for processing`, { account, jobId, workerPid: process.pid });
-  return job;
+  const changed = asCount(db
+    .prepare(`UPDATE jobs SET status = 'processing', started_at = ?, worker_pid = ?
+              WHERE id = ? AND account = ? AND status = 'pending'`)
+    .run(new Date().toISOString(), process.pid, jobId, account).changes);
+
+  if (changed === 0) {
+    logger.warn('Cannot claim job - not pending or not found', { account, jobId });
+    return null;
+  }
+
+  logger.info('Claimed job for processing', { account, jobId, workerPid: process.pid });
+  return getJob(account, jobId);
 }
 
-/**
- * Mark a job as successfully completed.
- * @param account - Account identifier
- * @param jobId - Job ID to complete
- */
+/** Move a job to a terminal state. */
+function finishJob(account: string, jobId: string, status: 'completed' | 'failed' | 'cancelled', error: string | null): boolean {
+  const changed = asCount(getDb()
+    .prepare(`UPDATE jobs SET status = ?, completed_at = ?, error = ?, worker_pid = NULL
+              WHERE id = ? AND account = ?`)
+    .run(status, new Date().toISOString(), error, jobId, account).changes);
+
+  if (changed === 0) logger.warn(`Cannot ${status} job - not found`, { account, jobId });
+  return changed > 0;
+}
+
+/** Mark a job as successfully completed. */
 export function completeJob(account: string, jobId: string): void {
-  const job = mutateJob(account, jobId, 'complete', j => {
-    j.status = 'completed';
-    j.completedAt = new Date().toISOString();
-    j.workerPid = null;
-    return true;
-  });
-
-  if (job) logger.info(`Job completed`, { account, jobId });
+  if (finishJob(account, jobId, 'completed', null)) {
+    logger.info('Job completed', { account, jobId });
+  }
 }
 
-/**
- * Mark a job as failed with error message.
- * @param account - Account identifier
- * @param jobId - Job ID to fail
- * @param error - Error message describing failure
- */
+/** Mark a job as failed, recording why. */
 export function failJob(account: string, jobId: string, error: string): void {
-  const job = mutateJob(account, jobId, 'fail', j => {
-    j.status = 'failed';
-    j.error = error;
-    j.completedAt = new Date().toISOString();
-    j.workerPid = null;
-    return true;
-  });
-
-  if (job) logger.error(`Job failed`, { account, jobId, error });
+  if (finishJob(account, jobId, 'failed', error)) {
+    logger.error('Job failed', { account, jobId, error });
+  }
 }
 
 /**
- * Cancel a pending job. Only works for pending jobs.
- * @param account - Account identifier
- * @param jobId - Job ID to cancel
- * @returns true if cancelled, false if job not pending or not found
+ * Cancel a job that has not started. A job already being processed is left
+ * alone: its worker is mid-upload and would keep going regardless.
  */
 export function cancelJob(account: string, jobId: string): boolean {
-  const job = mutateJob(account, jobId, 'cancel', j => {
-    if (j.status !== 'pending') {
-      logger.warn(`Cannot cancel job - not pending`, { account, jobId, status: j.status });
-      return false;
-    }
-    j.status = 'cancelled';
-    j.completedAt = new Date().toISOString();
-    return true;
-  });
+  const changed = asCount(getDb()
+    .prepare(`UPDATE jobs SET status = 'cancelled', completed_at = ?
+              WHERE id = ? AND account = ? AND status = 'pending'`)
+    .run(new Date().toISOString(), jobId, account).changes);
 
-  if (job) logger.info(`Job cancelled`, { account, jobId });
-  return job !== null;
+  if (changed === 0) {
+    logger.warn('Cannot cancel job - not pending or not found', { account, jobId });
+    return false;
+  }
+
+  logger.info('Job cancelled', { account, jobId });
+  return true;
 }
 
-/**
- * Get a specific job by ID.
- * @param account - Account identifier
- * @param jobId - Job ID to retrieve
- * @returns Job or null if not found
- */
+/** Get one job by ID. */
 export function getJob(account: string, jobId: string): QueueJob | null {
-  const queue = readQueue(account);
-  return queue.jobs.find(j => j.id === jobId) || null;
+  const row = asJobRow(getDb()
+    .prepare('SELECT * FROM jobs WHERE id = ? AND account = ?')
+    .get(jobId, account));
+
+  return row ? rowToJob(row) : null;
 }
 
 /**
- * List all jobs for an account.
- * @param account - Account identifier
- * @returns Array of all jobs
+ * List jobs for an account, newest first.
+ *
+ * The filter is applied in SQL rather than by the caller, so a large history
+ * never has to be materialised to answer "show me the failures".
  */
-export function listJobs(account: string): QueueJob[] {
-  const queue = readQueue(account);
-  return queue.jobs;
+export function listJobs(account: string, filter: QueueListFilter = {}): QueueJob[] {
+  const clauses = ['account = ?'];
+  const params: unknown[] = [account];
+
+  if (filter.status) {
+    clauses.push('status = ?');
+    params.push(filter.status);
+  }
+
+  let sql = `SELECT * FROM jobs WHERE ${clauses.join(' AND ')} ORDER BY created_at DESC`;
+  if (filter.limit !== undefined) {
+    sql += ' LIMIT ?';
+    params.push(filter.limit);
+  }
+
+  const rows = asJobRows(getDb().prepare(sql).all(...(params as never[])));
+  return rows.map(rowToJob);
+}
+
+/** Count jobs by status in one pass, for summaries. */
+export function countJobsByStatus(account: string): Record<string, number> {
+  const rows = getDb()
+    .prepare('SELECT status, COUNT(*) AS count FROM jobs WHERE account = ? GROUP BY status')
+    .all(account) as unknown as { status: string; count: number }[];
+
+  return Object.fromEntries(rows.map(r => [r.status, r.count]));
 }
 
 /**
- * Get the position of a job in the pending queue (1-indexed).
- * @param account - Account identifier
- * @param jobId - Job ID to check position
- * @returns Position (1-indexed) or -1 if not found or not pending
+ * Position of a job in the pending queue, 1-indexed, or -1 if it is not
+ * waiting. Counts the jobs that would be claimed ahead of it, using the same
+ * ordering the claim query uses.
  */
 export function getQueuePosition(account: string, jobId: string): number {
-  const queue = readQueue(account);
-  const pendingJobs = queue.jobs
-    .filter(job => job.status === 'pending')
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const job = getJob(account, jobId);
+  if (!job || job.status !== 'pending') return -1;
 
-  const position = pendingJobs.findIndex(job => job.id === jobId);
-  return position === -1 ? -1 : position + 1; // Convert to 1-indexed
+  // Counted against the same three keys the claim order uses, so position and
+  // claim sequence cannot disagree.
+  const result = getDb()
+    .prepare(`SELECT COUNT(*) AS ahead
+              FROM jobs, (SELECT priority AS p, created_at AS c, rowid AS r
+                          FROM jobs WHERE id = ? AND account = ?) AS target
+              WHERE jobs.account = ? AND jobs.status = 'pending'
+                AND (jobs.priority > target.p
+                  OR (jobs.priority = target.p AND jobs.created_at < target.c)
+                  OR (jobs.priority = target.p AND jobs.created_at = target.c
+                      AND jobs.rowid < target.r))`)
+    .get(jobId, account, account) as { ahead: number } | undefined;
+
+  return (result?.ahead ?? 0) + 1;
 }
 
 /**
- * Recover stale jobs (processing jobs with dead worker PIDs).
- * Resets them back to pending status for retry.
- * @param account - Account identifier
- * @returns Count of recovered jobs
+ * Return jobs stranded in `processing` by a worker that died to the pending
+ * pool. A crash between claiming and finishing is invisible to the database —
+ * only the absence of the process reveals it.
  */
 export function recoverStaleJobs(account: string): number {
-  return withQueueLock(account, () => {
-    const queue = readQueue(account);
-    const recoveredCount = recoverStaleJobsInQueue(account, queue);
+  const db = getDb();
+  const rows = asJobRows(db
+    .prepare(`SELECT * FROM jobs WHERE account = ? AND status = 'processing' AND worker_pid IS NOT NULL`)
+    .all(account));
 
-    if (recoveredCount > 0) {
-      writeQueue(account, queue);
+  const stale = rows.filter(row => row.worker_pid !== null && !isProcessAlive(row.worker_pid));
+  if (stale.length === 0) return 0;
+
+  const reset = db.prepare(
+    `UPDATE jobs SET status = 'pending', worker_pid = NULL, started_at = NULL WHERE id = ?`
+  );
+  inTransaction(db, () => {
+    for (const row of stale) {
+      logger.warn('Recovering stale job from dead worker', {
+        account, jobId: row.id, workerPid: row.worker_pid,
+      });
+      reset.run(row.id);
     }
-
-    return recoveredCount;
   });
+
+  logger.info(`Recovered ${stale.length} stale jobs`, { account });
+  return stale.length;
 }
 
 /**
- * Clean up old completed/failed/cancelled jobs.
- * Removes jobs older than maxAge milliseconds.
- * @param account - Account identifier
- * @param maxAge - Maximum age in milliseconds (default: 24 hours)
- * @returns Count of cleaned up jobs
+ * Delete finished jobs older than `maxAge`.
+ *
+ * No longer called automatically: history is worth keeping, and unlike the JSON
+ * file it costs nothing per mutation to retain. Exposed for when a queue does
+ * need trimming.
  */
 export function cleanupCompletedJobs(account: string, maxAge: number = 24 * 60 * 60 * 1000): number {
-  return withQueueLock(account, () => {
-    const queue = readQueue(account);
-    const cleanedCount = cleanupCompletedJobsInQueue(account, queue, maxAge);
+  const cutoff = new Date(Date.now() - maxAge).toISOString();
+  const changes = asCount(getDb()
+    .prepare(`DELETE FROM jobs
+              WHERE account = ? AND status IN ('completed','failed','cancelled')
+                AND COALESCE(completed_at, created_at) < ?`)
+    .run(account, cutoff).changes);
 
-    if (cleanedCount > 0) {
-      writeQueue(account, queue);
-    }
-
-    return cleanedCount;
-  });
+  if (changes > 0) logger.info(`Cleaned up ${changes} old jobs`, { account });
+  return changes;
 }
 
-/**
- * Poll queue file until job reaches terminal state (completed/failed/cancelled).
- * Useful for waiting on job completion from a different process.
- * @param account - Account identifier
- * @param jobId - Job ID to monitor
- * @param intervalMs - Polling interval in milliseconds (default: 500ms)
- * @returns Promise resolving to true if completed, false if failed/cancelled
- */
+/** Wait until a job reaches a terminal state. Resolves true only on success. */
 export async function pollJobStatus(
   account: string,
   jobId: string,

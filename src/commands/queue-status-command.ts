@@ -1,7 +1,7 @@
 // src/commands/queue-status-command.ts
 import { basename } from 'node:path';
-import { listJobs } from '../queue/queue-manager.js';
-import type { QueueJob, QueueJobStatus } from '../queue/queue-types.js';
+import { listJobs, countJobsByStatus } from '../queue/queue-manager.js';
+import type { QueueJobStatus, QueueListFilter } from '../queue/queue-types.js';
 import { print } from '../utils/console-output.js';
 
 /**
@@ -10,15 +10,16 @@ import { print } from '../utils/console-output.js';
  * @param account - Account identifier
  * @returns true on success, false on error
  */
-export function queueStatusCommand(account: string): boolean {
-  const jobs = listJobs(account);
+export function queueStatusCommand(account: string, filter: QueueListFilter = {}): boolean {
+  const jobs = listJobs(account, filter);
+  const counts = countJobsByStatus(account);
 
   if (jobs.length === 0) {
-    print(`No jobs in queue for account: ${account}`);
+    const scope = filter.status ? ` with status '${filter.status}'` : '';
+    print(`No jobs${scope} for account: ${account}`);
     return true;
   }
 
-  // Print header
   print(`\nUpload Queue (account: ${account})\n`);
 
   // Column headers
@@ -45,28 +46,17 @@ export function queueStatusCommand(account: string): boolean {
     print(`${num}${id}${fileName}${status}${created}`);
   });
 
-  // Print summary
-  const statusCounts = countJobsByStatus(jobs);
-  const summaryParts: string[] = [];
+  // Counts come from the whole history rather than the rows just printed, so a
+  // --status or --limit view still shows what else exists.
+  const order: QueueJobStatus[] = ['processing', 'pending', 'completed', 'failed', 'cancelled'];
+  const summary = order
+    .filter(status => (counts[status] ?? 0) > 0)
+    .map(status => `${counts[status]!} ${status}`)
+    .join(', ');
 
-  if (statusCounts.processing > 0) {
-    summaryParts.push(`${statusCounts.processing} processing`);
-  }
-  if (statusCounts.pending > 0) {
-    summaryParts.push(`${statusCounts.pending} pending`);
-  }
-  if (statusCounts.completed > 0) {
-    summaryParts.push(`${statusCounts.completed} completed`);
-  }
-  if (statusCounts.failed > 0) {
-    summaryParts.push(`${statusCounts.failed} failed`);
-  }
-  if (statusCounts.cancelled > 0) {
-    summaryParts.push(`${statusCounts.cancelled} cancelled`);
-  }
-
-  const summary = summaryParts.join(', ');
-  print(`\nSummary: ${jobs.length} jobs (${summary})\n`);
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  const shown = jobs.length === total ? '' : `showing ${jobs.length} of `;
+  print(`\nSummary: ${shown}${total} jobs (${summary})\n`);
 
   return true;
 }
@@ -109,23 +99,3 @@ function formatRelativeTime(isoDate: string): string {
   }
 }
 
-/**
- * Count jobs by status for summary display.
- * @param jobs - Array of queue jobs
- * @returns Object with count per status
- */
-function countJobsByStatus(jobs: QueueJob[]): Record<QueueJobStatus, number> {
-  const counts: Record<QueueJobStatus, number> = {
-    pending: 0,
-    processing: 0,
-    completed: 0,
-    failed: 0,
-    cancelled: 0,
-  };
-
-  for (const job of jobs) {
-    counts[job.status]++;
-  }
-
-  return counts;
-}

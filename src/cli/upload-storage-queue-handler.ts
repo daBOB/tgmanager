@@ -71,6 +71,8 @@ async function queueDirectory(
       virtualPath: fileVirtualPath,
       storageChannelId: options.storageChannel,
       deleteSource: options.deleteSource,
+      priority: options.priority,
+      scheduledAt: parseScheduledAt(options.at),
     });
   }
 
@@ -78,6 +80,24 @@ async function queueDirectory(
   const { addJobs } = await import('../queue/queue-manager.js');
   const jobs = toQueue.length > 0 ? addJobs(account, toQueue) : [];
   return { jobIds: jobs.map(j => j.id), skippedCount };
+}
+
+/**
+ * Normalise `--at` into the ISO form the queue stores.
+ *
+ * Rejecting an unparseable value outright would fail an upload over a typo in
+ * an optional flag; scheduling is dropped and the job runs immediately instead,
+ * which is the behaviour without the flag at all.
+ */
+function parseScheduledAt(at: string | undefined): string | null {
+  if (!at) return null;
+
+  const when = new Date(at);
+  if (Number.isNaN(when.getTime())) {
+    printError(`Ignoring --at "${at}": not a recognisable date, queueing immediately`);
+    return null;
+  }
+  return when.toISOString();
 }
 
 /**
@@ -127,6 +147,8 @@ export async function handleUploadStorageQueue(
     virtualPath: options.virtualPath!,
     storageChannelId: options.storageChannel,
     deleteSource: options.deleteSource,
+    priority: options.priority,
+    scheduledAt: parseScheduledAt(options.at),
   });
   const position = getQueuePosition(account, queuedJob.id);
   print(`\n✓ Added to upload queue (position: ${position})`);

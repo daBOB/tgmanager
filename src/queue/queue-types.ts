@@ -47,6 +47,12 @@ export interface QueueJob {
 
   /** Process ID of worker handling this job (null if not processing) */
   workerPid: number | null;
+
+  /** Higher runs first; jobs of equal priority run oldest-first. Default 0. */
+  priority: number;
+
+  /** ISO timestamp before which the job is not eligible. Null = run as soon as possible. */
+  scheduledAt: string | null;
 }
 
 /**
@@ -65,16 +71,18 @@ export interface QueueAddOptions {
 
   /** Whether to delete source file after successful upload (default: false) */
   deleteSource?: boolean;
+
+  /** Higher runs first (default: 0) */
+  priority?: number;
+
+  /** ISO timestamp before which the job must not start (default: immediately) */
+  scheduledAt?: string | null;
 }
 
-/**
- * Queue file structure persisted to JSON on disk.
- * Each account has its own queue file in ~/.tgmanager/queue/
- */
-export interface QueueFile {
-  /** Queue file format version for future compatibility */
-  version: 1;
-
-  /** Array of all jobs for this account (pending, processing, completed, failed) */
-  jobs: QueueJob[];
+/** Filters accepted when listing jobs. */
+export interface QueueListFilter {
+  /** Restrict to one status; omit for all. */
+  status?: QueueJobStatus;
+  /** Cap the number of rows returned. */
+  limit?: number;
 }

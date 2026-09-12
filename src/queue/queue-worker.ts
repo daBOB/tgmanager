@@ -10,8 +10,7 @@ import {
   completeJob,
   failJob,
   recoverStaleJobs,
-  cleanupCompletedJobs,
-  listJobs
+  countJobsByStatus
 } from './queue-manager.js';
 import logger from '../logger.js';
 import { print } from '../utils/console-output.js';
@@ -33,9 +32,6 @@ export async function startWorker(
   if (recovered > 0) {
     print(`Recovered ${recovered} stale job(s) from previous run`);
   }
-
-  // Cleanup old completed/failed/cancelled jobs (>24h)
-  cleanupCompletedJobs(account);
 
   let processed = 0;
   let failed = 0;
@@ -63,7 +59,7 @@ export async function startWorker(
     const job = claimJob(account, nextJob.id);
     if (!job) continue; // Race condition: another process claimed it
 
-    const pending = listJobs(account).filter(j => j.status === 'pending').length;
+    const pending = countJobsByStatus(account).pending ?? 0;
     print(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);
 
     try {

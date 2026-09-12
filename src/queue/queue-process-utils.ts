@@ -1,82 +1,10 @@
-// src/queue/queue-process-utils.ts
+// Waiting on a queue job from a process that is not the one running it.
+//
+// Stale-job recovery and cleanup used to live here too, operating on a whole
+// in-memory queue; both are single statements against the database now and sit
+// in queue-manager.
 import logger from '../logger.js';
-import type { QueueJob, QueueFile } from './queue-types.js';
-import { isProcessAlive } from '../utils/process-liveness.js';
-
-/**
- * Recover stale jobs (processing jobs with dead worker PIDs).
- * Modifies queue in place by resetting stale jobs to pending.
- * @param account - Account identifier (for logging)
- * @param queue - Queue data to scan for stale jobs
- * @returns Count of recovered jobs
- */
-export function recoverStaleJobsInQueue(account: string, queue: QueueFile): number {
-  let recoveredCount = 0;
-
-  for (const job of queue.jobs) {
-    if (job.status === 'processing' && job.workerPid !== null) {
-      if (!isProcessAlive(job.workerPid)) {
-        logger.warn(`Recovering stale job from dead worker`, {
-          account,
-          jobId: job.id,
-          workerPid: job.workerPid,
-        });
-
-        job.status = 'pending';
-        job.workerPid = null;
-        job.startedAt = null;
-        recoveredCount++;
-      }
-    }
-  }
-
-  if (recoveredCount > 0) {
-    logger.info(`Recovered ${recoveredCount} stale jobs`, { account });
-  }
-
-  return recoveredCount;
-}
-
-/**
- * Clean up old completed/failed/cancelled jobs.
- * Modifies queue in place by removing old jobs.
- * @param account - Account identifier (for logging)
- * @param queue - Queue data to clean up
- * @param maxAge - Maximum age in milliseconds
- * @returns Count of cleaned up jobs
- */
-export function cleanupCompletedJobsInQueue(
-  account: string,
-  queue: QueueFile,
-  maxAge: number
-): number {
-  const now = Date.now();
-  const originalCount = queue.jobs.length;
-
-  queue.jobs = queue.jobs.filter(job => {
-    // Keep pending and processing jobs
-    if (job.status === 'pending' || job.status === 'processing') {
-      return true;
-    }
-
-    // Remove old completed/failed/cancelled jobs
-    if (job.completedAt) {
-      const completedTime = new Date(job.completedAt).getTime();
-      const age = now - completedTime;
-      return age < maxAge;
-    }
-
-    return true;
-  });
-
-  const cleanedCount = originalCount - queue.jobs.length;
-
-  if (cleanedCount > 0) {
-    logger.info(`Cleaned up ${cleanedCount} old jobs`, { account, maxAge });
-  }
-
-  return cleanedCount;
-}
+import type { QueueJob } from './queue-types.js';
 
 const DEFAULT_POLL_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 

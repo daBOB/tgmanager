@@ -1,12 +1,14 @@
-// Covers the queue job state machine and the locking that makes concurrent
-// CLI/worker access safe. The CLI enqueues jobs before taking the account lock
-// (a worker may already hold it), so two processes really do write this file
-// at the same time.
+// Covers the queue job state machine on its SQLite backing store.
+//
+// The lockfile suite that used to live here is gone with the lockfile: claiming
+// is now a guarded UPDATE, so exclusivity is a property of the statement rather
+// than of a file created with O_EXCL.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { makeTempDir } from '../helpers/test-fixtures.js';
 
-// The queue lives under $HOME/.tgmanager/queue, so each test gets its own HOME.
+// The database lives under $HOME/.tgmanager, so each test gets its own HOME and
+// therefore its own database.
 let tempHome: string;
 const realHome = process.env.HOME;
 
@@ -15,12 +17,15 @@ beforeEach(() => {
   process.env.HOME = tempHome;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  const { closeDb } = await import('../../src/queue/queue-database.js');
+  const { getQueueDbPath } = await import('../../src/queue/queue-manager.js');
+  closeDb(getQueueDbPath());
   process.env.HOME = realHome;
   rmSync(tempHome, { recursive: true, force: true });
 });
 
-/** Imported lazily so each test picks up the current HOME. */
+/** Imported lazily so each test resolves the database under the current HOME. */
 async function queue() {
   return import('../../src/queue/queue-manager.js');
 }
@@ -58,71 +63,67 @@ describe('queue job lifecycle', () => {
 
   it('claims a pending job exactly once', async () => {
     const { addJob, claimJob } = await queue();
+
     const job = addJob(ACCOUNT, jobOptions());
 
-    const claimed = claimJob(ACCOUNT, job.id);
-    const reclaimed = claimJob(ACCOUNT, job.id);
-
-    expect(claimed?.status).toBe('processing');
-    expect(claimed?.workerPid).toBe(process.pid);
-    expect(reclaimed).toBeNull();
+    expect(claimJob(ACCOUNT, job.id)?.status).toBe('processing');
+    expect(claimJob(ACCOUNT, job.id)).toBeNull();
   });
 
   it('completes a claimed job and clears its worker', async () => {
     const { addJob, claimJob, completeJob, getJob } = await queue();
+
     const job = addJob(ACCOUNT, jobOptions());
     claimJob(ACCOUNT, job.id);
-
     completeJob(ACCOUNT, job.id);
 
     const stored = getJob(ACCOUNT, job.id);
     expect(stored?.status).toBe('completed');
     expect(stored?.workerPid).toBeNull();
-    expect(stored?.completedAt).not.toBeNull();
+    expect(stored?.completedAt).toBeTruthy();
   });
 
   it('records the reason a job failed', async () => {
-    const { addJob, claimJob, failJob, getJob } = await queue();
-    const job = addJob(ACCOUNT, jobOptions());
-    claimJob(ACCOUNT, job.id);
+    const { addJob, failJob, getJob } = await queue();
 
-    failJob(ACCOUNT, job.id, 'flood wait exceeded');
+    const job = addJob(ACCOUNT, jobOptions());
+    failJob(ACCOUNT, job.id, 'RPC_CALL_FAIL');
 
     const stored = getJob(ACCOUNT, job.id);
     expect(stored?.status).toBe('failed');
-    expect(stored?.error).toBe('flood wait exceeded');
+    expect(stored?.error).toBe('RPC_CALL_FAIL');
   });
 
   it('cancels a pending job but not one already processing', async () => {
     const { addJob, claimJob, cancelJob } = await queue();
-    const pending = addJob(ACCOUNT, jobOptions());
-    const running = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/b' }));
-    claimJob(ACCOUNT, running.id);
 
+    const pending = addJob(ACCOUNT, jobOptions());
     expect(cancelJob(ACCOUNT, pending.id)).toBe(true);
-    expect(cancelJob(ACCOUNT, running.id)).toBe(false);
+
+    const processing = addJob(ACCOUNT, jobOptions());
+    claimJob(ACCOUNT, processing.id);
+    expect(cancelJob(ACCOUNT, processing.id)).toBe(false);
   });
 
   it('reports false for operations on unknown jobs', async () => {
-    const { cancelJob, getJob } = await queue();
+    const { claimJob, cancelJob, getJob } = await queue();
 
-    expect(cancelJob(ACCOUNT, 'does-not-exist')).toBe(false);
-    expect(getJob(ACCOUNT, 'does-not-exist')).toBeNull();
+    expect(getJob(ACCOUNT, 'missing')).toBeNull();
+    expect(claimJob(ACCOUNT, 'missing')).toBeNull();
+    expect(cancelJob(ACCOUNT, 'missing')).toBe(false);
   });
 
-  it('reports 1-indexed queue position, and -1 once claimed', async () => {
-    const { addJob, claimJob, getQueuePosition } = await queue();
-    const first = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/a' }));
-    const second = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/b' }));
+  it('keeps accounts separate', async () => {
+    const { addJob, getJob, listJobs } = await queue();
 
-    expect(getQueuePosition(ACCOUNT, first.id)).toBe(1);
-    expect(getQueuePosition(ACCOUNT, second.id)).toBe(2);
+    const mine = addJob(ACCOUNT, jobOptions());
 
-    claimJob(ACCOUNT, first.id);
-    expect(getQueuePosition(ACCOUNT, first.id)).toBe(-1);
+    expect(getJob('other', mine.id)).toBeNull();
+    expect(listJobs('other')).toHaveLength(0);
+    expect(listJobs(ACCOUNT)).toHaveLength(1);
   });
 
-  it('returns an empty queue rather than failing when no file exists', async () => {
+  it('returns an empty queue rather than failing when nothing exists yet', async () => {
     const { listJobs, getNextPendingJob } = await queue();
 
     expect(listJobs(ACCOUNT)).toEqual([]);
@@ -130,78 +131,200 @@ describe('queue job lifecycle', () => {
   });
 });
 
+describe('priority and scheduling', () => {
+  it('claims higher priority first regardless of arrival order', async () => {
+    const { addJob, getNextPendingJob } = await queue();
+
+    addJob(ACCOUNT, jobOptions({ filePath: '/tmp/normal' }));
+    const urgent = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/urgent', priority: 10 }));
+
+    expect(getNextPendingJob(ACCOUNT)?.id).toBe(urgent.id);
+  });
+
+  it('keeps FIFO order among jobs enqueued in the same millisecond', async () => {
+    // created_at only resolves to milliseconds, and a directory enqueue inserts
+    // the whole batch well inside one. Without a tiebreaker their order is
+    // undefined and the queue drains arbitrarily.
+    const { addJobs, getNextPendingJob, claimJob, completeJob } = await queue();
+
+    const batch = Array.from({ length: 20 }, (_, i) => jobOptions({ filePath: `/tmp/${i}` }));
+    const created = addJobs(ACCOUNT, batch);
+    expect(new Set(created.map(j => j.createdAt)).size).toBeLessThan(created.length);
+
+    const drained: string[] = [];
+    for (;;) {
+      const next = getNextPendingJob(ACCOUNT);
+      if (!next) break;
+      claimJob(ACCOUNT, next.id);
+      completeJob(ACCOUNT, next.id);
+      drained.push(next.filePath);
+    }
+
+    expect(drained).toEqual(batch.map((b: { filePath: string }) => b.filePath));
+  });
+
+  it('falls back to oldest-first within one priority', async () => {
+    const { addJob, getNextPendingJob } = await queue();
+
+    const first = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/a', priority: 5 }));
+    addJob(ACCOUNT, jobOptions({ filePath: '/tmp/b', priority: 5 }));
+
+    expect(getNextPendingJob(ACCOUNT)?.id).toBe(first.id);
+  });
+
+  it('does not offer a job scheduled for the future', async () => {
+    const { addJob, getNextPendingJob } = await queue();
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+
+    addJob(ACCOUNT, jobOptions({ scheduledAt: tomorrow }));
+
+    expect(getNextPendingJob(ACCOUNT)).toBeNull();
+  });
+
+  it('offers a job whose scheduled time has passed', async () => {
+    const { addJob, getNextPendingJob } = await queue();
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+
+    const due = addJob(ACCOUNT, jobOptions({ scheduledAt: yesterday }));
+
+    expect(getNextPendingJob(ACCOUNT)?.id).toBe(due.id);
+  });
+
+  it('skips a scheduled job in favour of one that is ready now', async () => {
+    const { addJob, getNextPendingJob } = await queue();
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+
+    addJob(ACCOUNT, jobOptions({ filePath: '/tmp/later', priority: 99, scheduledAt: tomorrow }));
+    const ready = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/now' }));
+
+    expect(getNextPendingJob(ACCOUNT)?.id).toBe(ready.id);
+  });
+});
+
+describe('queue position', () => {
+  it('is 1-indexed and honours priority', async () => {
+    const { addJob, getQueuePosition } = await queue();
+
+    const first = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/a' }));
+    const second = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/b' }));
+    const jumped = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/c', priority: 1 }));
+
+    expect(getQueuePosition(ACCOUNT, jumped.id)).toBe(1);
+    expect(getQueuePosition(ACCOUNT, first.id)).toBe(2);
+    expect(getQueuePosition(ACCOUNT, second.id)).toBe(3);
+  });
+
+  it('is -1 once the job is no longer pending', async () => {
+    const { addJob, claimJob, getQueuePosition } = await queue();
+
+    const job = addJob(ACCOUNT, jobOptions());
+    claimJob(ACCOUNT, job.id);
+
+    expect(getQueuePosition(ACCOUNT, job.id)).toBe(-1);
+  });
+});
+
+describe('listing and filtering', () => {
+  it('filters by status in SQL', async () => {
+    const { addJob, failJob, listJobs } = await queue();
+
+    const doomed = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/bad' }));
+    addJob(ACCOUNT, jobOptions({ filePath: '/tmp/good' }));
+    failJob(ACCOUNT, doomed.id, 'boom');
+
+    const failures = listJobs(ACCOUNT, { status: 'failed' });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.error).toBe('boom');
+  });
+
+  it('caps results with a limit', async () => {
+    const { addJobs, listJobs } = await queue();
+
+    addJobs(ACCOUNT, Array.from({ length: 10 }, (_, i) => jobOptions({ filePath: `/tmp/${i}` })));
+
+    expect(listJobs(ACCOUNT, { limit: 3 })).toHaveLength(3);
+  });
+
+  it('counts every status in one pass', async () => {
+    const { addJob, failJob, completeJob, countJobsByStatus } = await queue();
+
+    const a = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/a' }));
+    const b = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/b' }));
+    addJob(ACCOUNT, jobOptions({ filePath: '/tmp/c' }));
+    completeJob(ACCOUNT, a.id);
+    failJob(ACCOUNT, b.id, 'boom');
+
+    expect(countJobsByStatus(ACCOUNT)).toEqual({ completed: 1, failed: 1, pending: 1 });
+  });
+});
+
+describe('capacity', () => {
+  it('accepts far more than the old 1000-job cap', async () => {
+    const { addJobs, countJobsByStatus } = await queue();
+
+    addJobs(ACCOUNT, Array.from({ length: 5000 }, (_, i) => jobOptions({ filePath: `/tmp/${i}` })));
+
+    expect(countJobsByStatus(ACCOUNT).pending).toBe(5000);
+  });
+});
+
 describe('stale job recovery', () => {
   it('returns jobs owned by a dead worker to pending', async () => {
-    const { addJob, getQueueFilePath, recoverStaleJobs, getJob } = await queue();
-    const job = addJob(ACCOUNT, jobOptions());
+    const { addJob, claimJob, recoverStaleJobs, getJob } = await queue();
+    const { getDb } = await import('../../src/queue/queue-database.js');
 
-    // Simulate a worker that claimed the job and then crashed. PID 0x7FFFFFFF
-    // is above the maximum allowed on Linux, so it can never be live.
-    const path = getQueueFilePath(ACCOUNT);
-    const data = JSON.parse(readFileSync(path, 'utf-8'));
-    data.jobs[0].status = 'processing';
-    data.jobs[0].workerPid = 0x7fffffff;
-    data.jobs[0].startedAt = new Date().toISOString();
-    writeFileSync(path, JSON.stringify(data));
+    const job = addJob(ACCOUNT, jobOptions());
+    claimJob(ACCOUNT, job.id);
+    // PID 2^22 is above Linux's default pid_max, so it cannot be running.
+    getDb().prepare('UPDATE jobs SET worker_pid = ? WHERE id = ?').run(4194304, job.id);
 
     expect(recoverStaleJobs(ACCOUNT)).toBe(1);
-    expect(getJob(ACCOUNT, job.id)?.status).toBe('pending');
+
+    const recovered = getJob(ACCOUNT, job.id);
+    expect(recovered?.status).toBe('pending');
+    expect(recovered?.workerPid).toBeNull();
+    expect(recovered?.startedAt).toBeNull();
   });
 
   it('leaves jobs owned by a live worker alone', async () => {
     const { addJob, claimJob, recoverStaleJobs, getJob } = await queue();
+
     const job = addJob(ACCOUNT, jobOptions());
-    claimJob(ACCOUNT, job.id); // claimed by this very much alive process
+    claimJob(ACCOUNT, job.id); // claimed by this process, which is alive
 
     expect(recoverStaleJobs(ACCOUNT)).toBe(0);
     expect(getJob(ACCOUNT, job.id)?.status).toBe('processing');
   });
 });
 
-describe('queue file locking', () => {
-  it('releases the lock after a successful mutation', async () => {
-    const { addJob, getQueueFilePath } = await queue();
-    const job = addJob(ACCOUNT, jobOptions());
-
-    expect(job.id).toBeTruthy();
-    expect(existsSync(`${getQueueFilePath(ACCOUNT)}.lock`)).toBe(false);
-  });
-
-  it('releases the lock even when the mutation throws', async () => {
-    const { addJob, getQueueFilePath } = await queue();
-
-    // Fill the queue so the next add throws from inside the locked section
-    for (let i = 0; i < 1000; i++) addJob(ACCOUNT, jobOptions({ filePath: `/tmp/${i}` }));
-
-    expect(() => addJob(ACCOUNT, jobOptions())).toThrow(/Queue is full/);
-    expect(existsSync(`${getQueueFilePath(ACCOUNT)}.lock`)).toBe(false);
-  });
-
-  it('breaks a lock left behind by a dead process', async () => {
-    const { addJob, getQueueFilePath, getQueueDir } = await queue();
-    const { mkdirSync } = await import('node:fs');
-
-    mkdirSync(getQueueDir(), { recursive: true });
-    const lockPath = `${getQueueFilePath(ACCOUNT)}.lock`;
-    writeFileSync(lockPath, '2147483647'); // PID that cannot be running
+describe('retention', () => {
+  it('keeps finished jobs by default so history survives', async () => {
+    const { addJob, completeJob, listJobs } = await queue();
 
     const job = addJob(ACCOUNT, jobOptions());
+    completeJob(ACCOUNT, job.id);
 
-    expect(job.status).toBe('pending');
-    expect(existsSync(lockPath)).toBe(false);
+    expect(listJobs(ACCOUNT, { status: 'completed' })).toHaveLength(1);
   });
 
-  it('serialises interleaved read-modify-write cycles', async () => {
-    // Without the lock, these cycles lose updates: each caller reads the queue,
-    // mutates its own copy and writes the whole document back.
-    const { addJob, listJobs } = await queue();
+  it('prunes only finished jobs older than the cutoff', async () => {
+    const { addJob, completeJob, cleanupCompletedJobs, listJobs } = await queue();
+    const { getDb } = await import('../../src/queue/queue-database.js');
 
-    await Promise.all(
-      Array.from({ length: 25 }, (_, i) =>
-        Promise.resolve().then(() => addJob(ACCOUNT, jobOptions({ filePath: `/tmp/${i}` })))
-      )
-    );
+    const old = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/old' }));
+    completeJob(ACCOUNT, old.id);
+    const longAgo = new Date(Date.now() - 48 * 3600_000).toISOString();
+    getDb().prepare('UPDATE jobs SET completed_at = ? WHERE id = ?').run(longAgo, old.id);
 
-    expect(listJobs(ACCOUNT)).toHaveLength(25);
+    const recent = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/recent' }));
+    completeJob(ACCOUNT, recent.id);
+    const stillPending = addJob(ACCOUNT, jobOptions({ filePath: '/tmp/pending' }));
+
+    expect(cleanupCompletedJobs(ACCOUNT, 24 * 3600_000)).toBe(1);
+
+    const remaining = listJobs(ACCOUNT).map(j => j.id);
+    expect(remaining).toContain(recent.id);
+    expect(remaining).toContain(stillPending.id);
+    expect(remaining).not.toContain(old.id);
   });
 });

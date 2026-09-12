@@ -34,6 +34,10 @@ export function buildCliOptions(): CommandOptions {
     .option('--storage-channel <id>', 'Storage channel ID (optional)')
     .option('--force', 'Force overwrite existing files')
     .option('--wait', 'Wait for queued upload to complete')
+    .option('--priority <n>', 'Queue priority; higher runs first (default 0)', Number)
+    .option('--at <when>', 'Do not start the queued upload before this time (ISO 8601)')
+    .option('--status <status>', 'Filter queue-status by job status')
+    .option('--limit <n>', 'Maximum number of jobs to show', Number)
     .allowExcessArguments(true);
 
   program.parse(process.argv);

@@ -15,6 +15,7 @@ import { routeCommand } from './command-router.js';
 import { print, printError } from '../utils/console-output.js';
 import { createGramjsLogger } from '../utils/gramjs-winston-logger.js';
 import type { CommandOptions } from '../types/index.js';
+import type { QueueJobStatus } from '../queue/queue-types.js';
 
 /** Create and connect a Telegram client for the given account. */
 export const startClient = async (account_name: string): Promise<TelegramClient> => {
@@ -116,7 +117,10 @@ function ensureUsableWorkingDirectory(): boolean {
 async function runQueueOnlyCommand(options: CommandOptions, account: string): Promise<number | null> {
   if (options.command === 'queue-status') {
     const { queueStatusCommand } = await import('../commands/queue-status-command.js');
-    queueStatusCommand(account);
+    queueStatusCommand(account, {
+      status: options.status as QueueJobStatus | undefined,
+      limit: options.limit,
+    });
     return 0;
   }
 
