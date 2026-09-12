@@ -1,10 +1,18 @@
-// Single implementation of Telegram flood-wait (error 420) retry handling.
+// Single implementation of retry handling for transient Telegram failures.
 //
-// Previously uploads retried in two places with diverging limits and downloads
-// had no handling at all, so a flood wait part-way through a large restore
-// aborted the whole file.
+// Two kinds are retried, because both are temporary and the request succeeds on
+// a later attempt:
+//   - flood waits (420), where the server states how long to back off;
+//   - server-side errors (5xx), where it does not. RPC_CALL_FAIL during
+//     upload.SaveBigFilePart is the common one; abandoning the transfer on the
+//     first of these fails a whole multi-part upload over a blip, and can
+//     strand already-uploaded parts so the final send reports FILE_PART_MISSING.
+//
+// Everything else — 4xx in particular — is a genuine rejection that will fail
+// identically on retry, so it propagates untouched.
 import logger from '../logger.js';
 import { sleep } from './sleep.js';
+import { getErrorCode } from './errors.js';
 
 /** Telegram's rate-limit error code. */
 const FLOOD_WAIT_CODE = 420;
@@ -13,6 +21,12 @@ const FLOOD_WAIT_CODE = 420;
 const DEFAULT_WAIT_SECONDS = 60;
 
 const DEFAULT_MAX_RETRIES = 10;
+
+/** First backoff step for a transient server error; doubles per attempt. */
+const DEFAULT_TRANSIENT_BACKOFF_MS = 1000;
+
+/** Ceiling for the doubling, so a long outage does not push waits into hours. */
+const MAX_TRANSIENT_BACKOFF_MS = 30_000;
 
 /**
  * Safety factor applied to the server's stated wait when the caller doesn't
@@ -32,6 +46,8 @@ export interface FloodWaitOptions {
   onResume?: () => void;
   /** Extra fields to include in log entries (chunk index, file id, ...). */
   context?: Record<string, unknown>;
+  /** First backoff step for transient server errors, in ms. Defaults to 1000. */
+  transientBackoffMs?: number;
 }
 
 /** A Telegram flood-wait error carries the seconds to wait. */
@@ -39,6 +55,16 @@ function asFloodWait(error: unknown): { seconds: number } | null {
   const candidate = error as { code?: number; seconds?: number } | null;
   if (!candidate || candidate.code !== FLOOD_WAIT_CODE) return null;
   return { seconds: candidate.seconds ?? DEFAULT_WAIT_SECONDS };
+}
+
+/**
+ * A 5xx means Telegram failed to serve a well-formed request, so the same
+ * request is worth repeating. A 4xx means it rejected the request itself and
+ * would reject it again identically.
+ */
+function isTransientServerError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  return typeof code === 'number' && code >= 500 && code < 600;
 }
 
 /**
@@ -55,6 +81,7 @@ export async function withFloodWaitRetry<T>(
     onWait,
     onResume,
     context = {},
+    transientBackoffMs = DEFAULT_TRANSIENT_BACKOFF_MS,
   } = options;
 
   for (let attempt = 0; ; attempt++) {
@@ -62,20 +89,35 @@ export async function withFloodWaitRetry<T>(
       return await fn();
     } catch (error) {
       const floodWait = asFloodWait(error);
-      if (!floodWait) throw error;
+      const transient = floodWait === null && isTransientServerError(error);
+      if (!floodWait && !transient) throw error;
 
       if (attempt >= maxRetries) {
-        logger.error('Max flood wait retries exceeded', { ...context, attempt });
-        throw new Error(`Max flood wait retries exceeded (${maxRetries})`, { cause: error });
+        const kind = floodWait ? 'flood wait' : 'transient error';
+        logger.error(`Max ${kind} retries exceeded`, { ...context, attempt });
+        throw new Error(`Max ${kind} retries exceeded (${maxRetries})`, { cause: error });
       }
 
-      const waitSeconds = Math.max(1, Math.ceil(floodWait.seconds * multiplier));
-      logger.warn(`Flood wait, retrying in ${waitSeconds}s`, {
-        ...context,
-        originalWait: floodWait.seconds,
-        actualWait: waitSeconds,
-        attempt,
-      });
+      let waitSeconds: number;
+      if (floodWait) {
+        // The server states the wait; the multiplier is a safety factor on top.
+        waitSeconds = Math.max(1, Math.ceil(floodWait.seconds * multiplier));
+        logger.warn(`Flood wait, retrying in ${waitSeconds}s`, {
+          ...context,
+          originalWait: floodWait.seconds,
+          actualWait: waitSeconds,
+          attempt,
+        });
+      } else {
+        // No stated wait, so back off exponentially and let the server recover.
+        waitSeconds = Math.min(transientBackoffMs * 2 ** attempt, MAX_TRANSIENT_BACKOFF_MS) / 1000;
+        logger.warn(`Transient Telegram error, retrying in ${waitSeconds}s`, {
+          ...context,
+          code: getErrorCode(error),
+          error: (error as Error).message,
+          attempt,
+        });
+      }
 
       onWait?.(waitSeconds, attempt);
       await sleep(waitSeconds * 1000);
