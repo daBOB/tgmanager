@@ -14,6 +14,7 @@ import { handleUploadStorageQueue } from './upload-storage-queue-handler.js';
 import { routeCommand } from './command-router.js';
 import { print, printError } from '../utils/console-output.js';
 import { createGramjsLogger } from '../utils/gramjs-winston-logger.js';
+import { beginTelegramShutdown } from '../utils/telegram-shutdown-noise.js';
 import type { CommandOptions } from '../types/index.js';
 import type { QueueJobStatus } from '../queue/queue-types.js';
 
@@ -244,6 +245,9 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
     // gramjs keeps sockets and ping timers open; without this the process would
     // never exit now that handlers return instead of calling process.exit.
     if (client) {
+      // From here gramjs's update loop is expected to reject with TIMEOUT as
+      // its socket closes; that one rejection is filtered out.
+      beginTelegramShutdown();
       try {
         await client.disconnect();
       } catch (error) {

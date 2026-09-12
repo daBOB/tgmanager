@@ -61,10 +61,18 @@ function asFloodWait(error: unknown): { seconds: number } | null {
  * A 5xx means Telegram failed to serve a well-formed request, so the same
  * request is worth repeating. A 4xx means it rejected the request itself and
  * would reject it again identically.
+ *
+ * The magnitude is what matters, not the sign: gramjs reports its own transport
+ * failures with negative codes, and -503 (a request timeout, typically
+ * mid-transfer on upload.SaveBigFilePart) is every bit as retryable as a server
+ * 503. Negative 4xx codes stay non-retryable for the same reason positive ones do.
  */
 function isTransientServerError(error: unknown): boolean {
   const code = getErrorCode(error);
-  return typeof code === 'number' && code >= 500 && code < 600;
+  if (typeof code !== 'number') return false;
+
+  const magnitude = Math.abs(code);
+  return magnitude >= 500 && magnitude < 600;
 }
 
 /**

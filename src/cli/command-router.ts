@@ -3,10 +3,10 @@
 // Every handler returns a process exit code rather than calling process.exit
 // itself, so the caller can still run its cleanup (process.exit skips `finally`
 // blocks) and so handlers stay testable.
-import { rmSync, statSync } from 'node:fs';
 import { Api } from 'telegram';
 import type { TelegramClient } from 'telegram';
 import logger from '../logger.js';
+import { removeEmptySourceDirectory } from './remove-empty-source-directory.js';
 import { sanitizeInput } from '../utils/validation.js';
 import type { CommandOptions } from '../types/index.js';
 
@@ -40,29 +40,6 @@ async function createChannel(ctx: CommandContext): Promise<number> {
   const channelId = `-100${channel.id.toJSNumber()}`;
   logger.info('Channel created successfully', { channelId, name: sanitizedName });
   return 0;
-}
-
-/**
- * Remove the source directory once its files are gone.
- *
- * The direct upload path deleted the directory only when every file succeeded.
- * Per-file deletion now happens in the worker, so the same condition is
- * expressed by attempting a non-recursive remove: it succeeds exactly when
- * nothing is left, and fails harmlessly while any file remains — whether that
- * file failed, was skipped, or is still queued for another worker.
- */
-function removeEmptySourceDirectory(uploadPath: string): void {
-  if (!statSync(uploadPath).isDirectory()) return;
-
-  try {
-    rmSync(uploadPath, { recursive: false });
-    logger.info('Deleted source directory', { path: uploadPath });
-  } catch (error) {
-    logger.info('Source directory kept: not empty', {
-      path: uploadPath,
-      reason: (error as Error).message,
-    });
-  }
 }
 
 /**

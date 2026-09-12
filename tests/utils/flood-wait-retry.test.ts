@@ -96,3 +96,21 @@ describe('withFloodWaitRetry', () => {
     });
   });
 });
+
+describe('gramjs client-side errors', () => {
+  it('retries a -503 timeout from upload.SaveBigFilePart', async () => {
+    // gramjs signals its own transport failures with negative codes; -503 is a
+    // request timeout. A 207MB upload failed on exactly this without retrying.
+    const fn = failsThenSucceeds(2, telegramError(-503, 'Timeout (caused by upload.SaveBigFilePart)'));
+
+    await expect(withFloodWaitRetry(fn, FAST)).resolves.toBe('ok');
+  });
+
+  it('still refuses to retry a negative 4xx', async () => {
+    const err = telegramError(-400, 'BAD_REQUEST');
+    const fn = vi.fn(() => Promise.reject(err));
+
+    await expect(withFloodWaitRetry(fn, FAST)).rejects.toThrow('BAD_REQUEST');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
