@@ -11,6 +11,18 @@
 export type QueueJobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 /**
+ * What a job uploads to.
+ * - storage: the managed storage channel, addressed by virtualPath (chunked,
+ *   manifested, deduplicated).
+ * - channel: an arbitrary chat addressed by chatId, sent as a single file.
+ *
+ * Stored explicitly rather than inferred from which field is set, so the
+ * worker's dispatch is obvious and a malformed row cannot be silently
+ * misrouted.
+ */
+export type QueueJobKind = 'storage' | 'channel';
+
+/**
  * Queue job representing a pending upload-storage operation.
  * Each job tracks a single file upload through its entire lifecycle.
  */
@@ -18,11 +30,17 @@ export interface QueueJob {
   /** Unique job identifier (UUID) */
   id: string;
 
+  /** What this job uploads to */
+  kind: QueueJobKind;
+
   /** Absolute path to the source file on disk */
   filePath: string;
 
-  /** Virtual path in storage (where file will appear in storage tree) */
-  virtualPath: string;
+  /** Where the file appears in the storage tree. Null for channel uploads. */
+  virtualPath: string | null;
+
+  /** Destination chat for a channel upload. Null for storage uploads. */
+  chatId: string | null;
 
   /** Optional Telegram channel ID for storage (if not default) */
   storageChannelId?: string;
@@ -60,11 +78,17 @@ export interface QueueJob {
  * Simplified interface for job creation.
  */
 export interface QueueAddOptions {
+  /** What this job uploads to. Defaults to 'storage'. */
+  kind?: QueueJobKind;
+
   /** Absolute path to the source file on disk */
   filePath: string;
 
-  /** Virtual path in storage (where file will appear in storage tree) */
-  virtualPath: string;
+  /** Where the file appears in the storage tree. Required for storage jobs. */
+  virtualPath?: string | null;
+
+  /** Destination chat. Required for channel jobs. */
+  chatId?: string | null;
 
   /** Optional Telegram channel ID for storage (if not default) */
   storageChannelId?: string;

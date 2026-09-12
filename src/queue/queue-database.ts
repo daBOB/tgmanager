@@ -31,8 +31,12 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS jobs (
   id                 TEXT PRIMARY KEY,
   account            TEXT    NOT NULL,
+  kind               TEXT    NOT NULL DEFAULT 'storage',
   file_path          TEXT    NOT NULL,
-  virtual_path       TEXT    NOT NULL,
+  -- Exactly one of these is set, per the kind column: storage jobs address the
+  -- storage tree by virtual_path, channel jobs address a chat by chat_id.
+  virtual_path       TEXT,
+  chat_id            TEXT,
   storage_channel_id TEXT,
   delete_source      INTEGER NOT NULL DEFAULT 0,
   status             TEXT    NOT NULL,
@@ -76,9 +80,31 @@ export function getDb(path: string = getQueueDbPath()): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA synchronous = NORMAL');
   db.exec(SCHEMA);
+  migrate(db);
 
   connections.set(path, db);
   return db;
+}
+
+/**
+ * Bring an existing database up to the current schema.
+ *
+ * CREATE TABLE IF NOT EXISTS leaves an older table untouched, so columns added
+ * after a database was first created have to be added explicitly. Each is
+ * nullable or defaulted, so no backfill is needed: rows written before `kind`
+ * existed are storage jobs, which is what the default says.
+ */
+function migrate(db: DatabaseSync): void {
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(jobs)').all() as { name: string }[]).map(c => c.name)
+  );
+
+  if (!columns.has('kind')) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'storage'`);
+  }
+  if (!columns.has('chat_id')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN chat_id TEXT');
+  }
 }
 
 /** Close and forget a cached connection. Tests use this between cases. */

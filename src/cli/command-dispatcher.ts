@@ -202,12 +202,20 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
       queuedJobIds = outcome.jobIds;
     }
 
+    if (options.command === 'upload' && uploadPath && options.chatId) {
+      const { addJobs } = await import('../queue/queue-manager.js');
+      const { handleUploadChannelQueue } = await import('./upload-channel-queue-handler.js');
+      const outcome = handleUploadChannelQueue(account, uploadPath, options, addJobs);
+      if (outcome.kind === 'done') return outcome.exitCode;
+      queuedJobIds = outcome.jobIds;
+    }
+
     const lockDir = join(config.app.sessionDir, '..', 'locks');
     processLock = createProcessLock(lockDir, account);
     processLock.setupCleanup();
 
     if (!processLock.acquire()) {
-      if (options.command === 'upload-storage' && queuedJobIds.length > 0) {
+      if (queuedJobIds.length > 0) {
         return reportQueuedWorkToRunningWorker(account, options, queuedJobIds);
       }
 

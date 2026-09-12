@@ -7,8 +7,10 @@ import type { QueueJob, QueueJobStatus } from './queue-types.js';
 export interface JobRow {
   id: string;
   account: string;
+  kind: string;
   file_path: string;
-  virtual_path: string;
+  virtual_path: string | null;
+  chat_id: string | null;
   storage_channel_id: string | null;
   delete_source: number;
   status: string;
@@ -25,8 +27,10 @@ export interface JobRow {
 export function rowToJob(row: JobRow): QueueJob {
   return {
     id: row.id,
+    kind: row.kind === 'channel' ? 'channel' : 'storage',
     filePath: row.file_path,
     virtualPath: row.virtual_path,
+    chatId: row.chat_id,
     // The column is nullable, but the field is optional — keep undefined rather
     // than leaking null into callers that spread this back into options.
     storageChannelId: row.storage_channel_id ?? undefined,
@@ -47,8 +51,10 @@ export function jobToInsertParams(account: string, job: QueueJob): unknown[] {
   return [
     job.id,
     account,
+    job.kind,
     job.filePath,
     job.virtualPath,
+    job.chatId,
     job.storageChannelId ?? null,
     job.deleteSource ? 1 : 0,
     job.status,

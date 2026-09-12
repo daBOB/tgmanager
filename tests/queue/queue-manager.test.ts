@@ -4,7 +4,8 @@
 // is now a guarded UPDATE, so exclusivity is a property of the statement rather
 // than of a file created with O_EXCL.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync } from 'node:fs';
+import { rmSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { makeTempDir } from '../helpers/test-fixtures.js';
 
 // The database lives under $HOME/.tgmanager, so each test gets its own HOME and
@@ -326,5 +327,84 @@ describe('retention', () => {
     expect(remaining).toContain(recent.id);
     expect(remaining).toContain(stillPending.id);
     expect(remaining).not.toContain(old.id);
+  });
+});
+
+describe('job kinds', () => {
+  it('defaults to a storage job addressed by virtual path', async () => {
+    const { addJob } = await queue();
+
+    const job = addJob(ACCOUNT, jobOptions());
+
+    expect(job.kind).toBe('storage');
+    expect(job.virtualPath).toBe('Archive/example.bin');
+    expect(job.chatId).toBeNull();
+  });
+
+  it('stores a channel job addressed by chat id', async () => {
+    const { addJob, getJob } = await queue();
+
+    const job = addJob(ACCOUNT, {
+      kind: 'channel',
+      filePath: '/tmp/clip.mp4',
+      chatId: '-1001909324443',
+    } as never);
+
+    const stored = getJob(ACCOUNT, job.id);
+    expect(stored?.kind).toBe('channel');
+    expect(stored?.chatId).toBe('-1001909324443');
+    expect(stored?.virtualPath).toBeNull();
+  });
+
+  it('drains both kinds from one queue in priority order', async () => {
+    const { addJob, getNextPendingJob, claimJob, completeJob } = await queue();
+
+    addJob(ACCOUNT, jobOptions({ filePath: '/tmp/storage.bin' }));
+    const urgent = addJob(ACCOUNT, {
+      kind: 'channel', filePath: '/tmp/urgent.mp4', chatId: '-100', priority: 5,
+    } as never);
+
+    const first = getNextPendingJob(ACCOUNT);
+    expect(first?.id).toBe(urgent.id);
+    expect(first?.kind).toBe('channel');
+
+    claimJob(ACCOUNT, first!.id);
+    completeJob(ACCOUNT, first!.id);
+    expect(getNextPendingJob(ACCOUNT)?.kind).toBe('storage');
+  });
+});
+
+describe('schema migration', () => {
+  it('adds the channel columns to a database created before they existed', async () => {
+    const { getDb } = await import('../../src/queue/queue-database.js');
+    const { getQueueDbPath } = await import('../../src/queue/queue-manager.js');
+    const { closeDb } = await import('../../src/queue/queue-database.js');
+
+    // Build the pre-channel schema by hand, then reopen through getDb.
+    const path = getQueueDbPath();
+    closeDb(path);
+    mkdirSync(dirname(path), { recursive: true });
+    const { DatabaseSync } = await import('node:sqlite');
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`CREATE TABLE jobs (
+      id TEXT PRIMARY KEY, account TEXT NOT NULL, file_path TEXT NOT NULL,
+      virtual_path TEXT, storage_channel_id TEXT, delete_source INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 0, scheduled_at TEXT,
+      created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, error TEXT,
+      worker_pid INTEGER)`);
+    legacy.exec(`INSERT INTO jobs (id, account, file_path, virtual_path, status, created_at)
+                 VALUES ('legacy-1', '${ACCOUNT}', '/tmp/old.bin', 'Archive/old.bin', 'pending', '2026-01-01T00:00:00.000Z')`);
+    legacy.close();
+
+    const columns = (getDb(path).prepare('PRAGMA table_info(jobs)').all() as { name: string }[])
+      .map(c => c.name);
+    expect(columns).toContain('kind');
+    expect(columns).toContain('chat_id');
+
+    // The pre-existing row survives and reads back as a storage job.
+    const { getJob } = await queue();
+    const migrated = getJob(ACCOUNT, 'legacy-1');
+    expect(migrated?.kind).toBe('storage');
+    expect(migrated?.virtualPath).toBe('Archive/old.bin');
   });
 });

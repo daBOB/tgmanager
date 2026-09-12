@@ -14,10 +14,11 @@ import { pollJobStatusUntilDone } from './queue-process-utils.js';
 export { getQueueDir, getQueueDbPath };
 
 const INSERT_SQL = `
-  INSERT INTO jobs (id, account, file_path, virtual_path, storage_channel_id,
-                    delete_source, status, priority, scheduled_at, created_at,
-                    started_at, completed_at, error, worker_pid)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+  INSERT INTO jobs (id, account, kind, file_path, virtual_path, chat_id,
+                    storage_channel_id, delete_source, status, priority,
+                    scheduled_at, created_at, started_at, completed_at, error,
+                    worker_pid)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 /**
  * Ordering shared by claiming and by queue position, so the two agree.
@@ -36,8 +37,10 @@ const ELIGIBLE = `status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <
 function buildJob(options: QueueAddOptions): QueueJob {
   return {
     id: randomUUID(),
+    kind: options.kind ?? 'storage',
     filePath: options.filePath,
-    virtualPath: options.virtualPath,
+    virtualPath: options.virtualPath ?? null,
+    chatId: options.chatId ?? null,
     storageChannelId: options.storageChannelId,
     deleteSource: options.deleteSource ?? false,
     status: 'pending',

@@ -4,6 +4,8 @@ import { unlinkSync } from 'node:fs';
 import type { TelegramClient } from '../types/index.js';
 import { uploadStorageCommand } from '../commands/upload-storage-command.js';
 import { StorageService } from '../storage/storage-service.js';
+import { Uploader } from '../Uploader.js';
+import type { QueueJob } from './queue-types.js';
 import {
   getNextPendingJob,
   claimJob,
@@ -14,6 +16,44 @@ import {
 } from './queue-manager.js';
 import logger from '../logger.js';
 import { print } from '../utils/console-output.js';
+
+/**
+ * Run one queued job against whichever destination it names.
+ *
+ * The two kinds share nothing but the file on disk: a storage job is chunked,
+ * manifested and deduplicated into the managed channel, while a channel job is
+ * a single send to an arbitrary chat. Dispatching on `kind` keeps that split in
+ * one place instead of spread through the drain loop.
+ */
+async function runJob(
+  job: QueueJob,
+  client: TelegramClient,
+  uploader: Uploader,
+  storageFor: (storageChannelId?: string) => Promise<StorageService>
+): Promise<boolean> {
+  if (job.kind === 'channel') {
+    if (!job.chatId) {
+      logger.error('Channel job has no chat id', { jobId: job.id });
+      return false;
+    }
+    return uploader.uploadFile(job.chatId, job.filePath);
+  }
+
+  if (!job.virtualPath) {
+    logger.error('Storage job has no virtual path', { jobId: job.id });
+    return false;
+  }
+
+  return uploadStorageCommand(
+    client,
+    {
+      filePath: job.filePath,
+      virtualPath: job.virtualPath,
+      storageChannelId: job.storageChannelId,
+    },
+    await storageFor(job.storageChannelId)
+  );
+}
 
 /**
  * Start queue worker: recover stale jobs, drain queue FIFO, exit when empty.
@@ -39,6 +79,10 @@ export async function startWorker(
   // One storage service for the whole drain: its channel index is cached, so
   // the history is walked once rather than once per job. Jobs that name a
   // different storage channel fall back to their own service.
+  // One Uploader for the whole drain: it caches the account's premium status,
+  // which would otherwise cost an API round-trip per file.
+  const uploader = new Uploader(client);
+
   const sharedStorage = new Map<string, StorageService>();
   const storageFor = async (storageChannelId?: string): Promise<StorageService> => {
     const key = storageChannelId ?? '';
@@ -63,15 +107,7 @@ export async function startWorker(
     print(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);
 
     try {
-      const success = await uploadStorageCommand(
-        client,
-        {
-          filePath: job.filePath,
-          virtualPath: job.virtualPath,
-          storageChannelId: job.storageChannelId
-        },
-        await storageFor(job.storageChannelId)
-      );
+      const success = await runJob(job, client, uploader, storageFor);
 
       if (success) {
         completeJob(account, job.id);
