@@ -49,16 +49,21 @@ over filenames is a usable index.
 - **Config is read once, at import.** `config.ts` throws at import time when no
   account is configured, so low-level utilities must not import it; pass values
   in instead.
-- **Type-safety warnings vs. errors.** The `no-unsafe-*` / `no-explicit-any`
-  family is tracked as warnings and burns down over time; rules that catch real
-  defects (floating promises, misused promises, unused bindings) are errors and
-  fail CI.
+- **Type safety is a hard gate.** `src/` carries no `any` and no unsafe member
+  access; the `no-unsafe-*` / `no-explicit-any` family is set to error, so the
+  backlog cannot re-accumulate. Where a library has no usable type (gramjs
+  returns broad unions and omits its EventEmitter surface), the boundary gets a
+  narrow local interface and a checked cast — never a blanket `any`. Tests keep
+  the looser rules so doubles can fake loosely-typed API shapes.
+- **Error codes.** Node attaches string errno codes and Telegram numeric ones,
+  neither on `Error`. `getErrorCode()` in `src/utils/errors.ts` is the single
+  place that narrows this.
 
 ## Development
 
 ```bash
 bun install
-bun run dev            # tsx watch against src/
+bun run dev            # bun --watch against src/
 bun run type-check
 bun run test           # vitest
 bun run test:coverage
