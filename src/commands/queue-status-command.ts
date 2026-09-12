@@ -5,13 +5,25 @@ import type { QueueJobStatus, QueueListFilter } from '../queue/queue-types.js';
 import { print } from '../utils/console-output.js';
 
 /**
+ * Rows printed when the caller does not ask for a specific number.
+ *
+ * The queue holds thousands of jobs, so an uncapped listing scrolls the useful
+ * part — the summary — off the screen. `--limit` overrides this.
+ */
+export const DEFAULT_STATUS_LIMIT = 50;
+
+/** Width of the File column; names are truncated to two less for padding. */
+const FILE_COLUMN_WIDTH = 34;
+
+/**
  * Display formatted queue status for an account.
- * Shows all jobs with their status, file names, and creation time.
+ * Shows jobs with their status, file names, and creation time.
  * @param account - Account identifier
  * @returns true on success, false on error
  */
 export function queueStatusCommand(account: string, filter: QueueListFilter = {}): boolean {
-  const jobs = listJobs(account, filter);
+  const limit = filter.limit ?? DEFAULT_STATUS_LIMIT;
+  const jobs = listJobs(account, { ...filter, limit });
   const counts = countJobsByStatus(account);
 
   if (jobs.length === 0) {
@@ -26,7 +38,7 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
   const headers = {
     num: '#'.padEnd(3),
     id: 'ID'.padEnd(10),
-    file: 'File'.padEnd(22),
+    file: 'File'.padEnd(FILE_COLUMN_WIDTH),
     status: 'Status'.padEnd(12),
     created: 'Created',
   };
@@ -39,7 +51,8 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
   jobs.forEach((job, index) => {
     const num = String(index + 1).padEnd(3);
     const id = job.id.substring(0, 8).padEnd(10);
-    const fileName = truncateFileName(basename(job.filePath), 20).padEnd(22);
+    const fileName = truncateFileName(basename(job.filePath), FILE_COLUMN_WIDTH - 2)
+      .padEnd(FILE_COLUMN_WIDTH);
     const status = job.status.padEnd(12);
     const created = formatRelativeTime(job.createdAt);
 
@@ -56,22 +69,30 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
 
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   const shown = jobs.length === total ? '' : `showing ${jobs.length} of `;
-  print(`\nSummary: ${shown}${total} jobs (${summary})\n`);
+  print(`\nSummary: ${shown}${total} jobs (${summary})`);
+
+  // Only when the *default* cap hid rows: someone who passed --limit already
+  // knows they asked for a subset.
+  if (filter.limit === undefined && jobs.length < total) {
+    print(`Showing the newest ${DEFAULT_STATUS_LIMIT}. Use --limit <n> for more, or --status <status> to filter.`);
+  }
+  print('');
 
   return true;
 }
 
 /**
- * Truncate file name to max length, adding '...' if truncated.
- * @param fileName - Original file name
- * @param maxLength - Maximum length including ellipsis
- * @returns Truncated file name
+ * Shorten a file name to `maxLength`, dropping characters from the *front*.
+ *
+ * Queued batches usually share a long prefix — an exported album, a bot's
+ * naming scheme — so cutting the tail leaves every row reading identically.
+ * The end carries the index or title that tells them apart.
  */
-function truncateFileName(fileName: string, maxLength: number): string {
-  if (fileName.length <= maxLength) {
-    return fileName;
-  }
-  return fileName.substring(0, maxLength - 3) + '...';
+export function truncateFileName(fileName: string, maxLength: number): string {
+  if (fileName.length <= maxLength) return fileName;
+
+  const ellipsis = '...';
+  return ellipsis + fileName.slice(fileName.length - (maxLength - ellipsis.length));
 }
 
 /**
