@@ -25,6 +25,8 @@ export interface TelegramConfig {
 export interface ImageProcessingConfig {
   maxDimension: number;
   maxCombinedDimensions: number;
+  /** Largest file Telegram accepts as a photo; above this, send as a document. */
+  maxPhotoBytes: number;
   supportedFormats: string[];
 }
 
@@ -64,6 +66,8 @@ export interface UploadOptions {
   mimeType?: string;
   attributes?: Api.TypeDocumentAttribute[];
   progressCallback?: (progress: number) => void;
+  /** Send as a file rather than letting the client infer photo/video from the extension. */
+  forceDocument?: boolean;
 }
 
 export interface CommandOptions {

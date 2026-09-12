@@ -1,8 +1,34 @@
-import { unlink } from 'node:fs/promises';
+import { unlink, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { getSharp } from '../utils/sharp-loader.js';
 import logger from '../logger.js';
 import config from '../config.js';
+
+/** Performs the Telegram upload; `forceDocument` suppresses photo handling. */
+type ImageUploadFn = (path: string, forceDocument: boolean) => Promise<boolean>;
+
+/**
+ * Upload `path`, choosing photo or document by file size.
+ *
+ * Telegram enforces a size ceiling on photos that is unrelated to dimensions,
+ * and rejects anything over it with PHOTO_SAVE_FILE_INVALID. The decision is
+ * made on the file actually being sent — after any resize — because resizing
+ * shrinks dimensions without guaranteeing the result clears the size limit.
+ */
+async function sendSizedImage(path: string, uploadFn: ImageUploadFn): Promise<boolean> {
+  const { size } = await stat(path);
+  const forceDocument = size > config.fileProcessing.image.maxPhotoBytes;
+
+  if (forceDocument) {
+    logger.info('Image exceeds Telegram photo limit, sending as document', {
+      file: basename(path),
+      size,
+      limit: config.fileProcessing.image.maxPhotoBytes,
+    });
+  }
+
+  return uploadFn(path, forceDocument);
+}
 
 /**
  * Handle image upload: check dimensions, resize if needed, then call uploadFn.
@@ -14,12 +40,12 @@ import config from '../config.js';
  */
 export async function uploadImageWithResize(
   filePath: string,
-  uploadFn: (path: string) => Promise<boolean>
+  uploadFn: ImageUploadFn
 ): Promise<boolean> {
   const sharp = await getSharp();
   if (!sharp) {
     logger.warn('Sharp not available, skipping image processing', { file: basename(filePath) });
-    return uploadFn(filePath);
+    return sendSizedImage(filePath, uploadFn);
   }
 
   try {
@@ -32,7 +58,7 @@ export async function uploadImageWithResize(
       logger.warn('Invalid image dimensions, falling back to document upload', {
         width, height, file: basename(filePath)
       });
-      return uploadFn(filePath);
+      return sendSizedImage(filePath, uploadFn);
     }
 
     const MAX_DIMENSION = config.fileProcessing.image.maxDimension;
@@ -43,14 +69,14 @@ export async function uploadImageWithResize(
     }
 
     logger.debug('Using original dimensions', { width, height, file: basename(filePath) });
-    return uploadFn(filePath);
+    return sendSizedImage(filePath, uploadFn);
   } catch (error) {
     logger.error('Error processing image', {
       file: basename(filePath),
       error: (error as Error).message
     });
     logger.info('Falling back to document upload', { file: basename(filePath) });
-    return uploadFn(filePath);
+    return sendSizedImage(filePath, uploadFn);
   }
 }
 
@@ -60,7 +86,7 @@ async function resizeAndUpload(
   filePath: string,
   width: number,
   height: number,
-  uploadFn: (path: string) => Promise<boolean>
+  uploadFn: ImageUploadFn
 ): Promise<boolean> {
   const MAX_DIMENSION = config.fileProcessing.image.maxDimension;
   const MAX_COMBINED = config.fileProcessing.image.maxCombinedDimensions;
@@ -89,7 +115,7 @@ async function resizeAndUpload(
   await sharp(filePath).resize(newWidth, newHeight).toFile(resizedFilePath);
 
   try {
-    return await uploadFn(resizedFilePath);
+    return await sendSizedImage(resizedFilePath, uploadFn);
   } finally {
     await unlink(resizedFilePath).catch(() => {});
   }

@@ -130,8 +130,11 @@ export class Uploader {
     });
   }
 
-  async uploadDocument(chatId: string, filePath: string): Promise<boolean> {
-    return this.sendFileWithProgress(chatId, filePath, Date.now(), 'Failed to upload document');
+  async uploadDocument(chatId: string, filePath: string, forceDocument = false): Promise<boolean> {
+    return this.sendFileWithProgress(
+      chatId, filePath, Date.now(), 'Failed to upload document',
+      forceDocument ? { forceDocument: true } : {}
+    );
   }
 
   async uploadFile(chatId: string, filePath: string): Promise<boolean> {
@@ -172,7 +175,8 @@ export class Uploader {
     }
 
     if (config.fileProcessing.image.supportedFormats.includes(extension)) {
-      return uploadImageWithResize(filePath, (path) => this.uploadDocument(chatId, path));
+      return uploadImageWithResize(filePath, (path, forceDocument) =>
+        this.uploadDocument(chatId, path, forceDocument));
     }
 
     return this.uploadDocument(chatId, filePath);
