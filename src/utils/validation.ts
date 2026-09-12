@@ -69,7 +69,7 @@ export function validateAccountName(accountName: string, availableAccounts: stri
 }
 
 /** Canonical command names accepted by the CLI */
-export const VALID_COMMANDS = ['upload', 'create', 'upload-storage', 'download-storage', 'list-storage', 'queue-status', 'queue-cancel'];
+export const VALID_COMMANDS = ['upload', 'create', 'upload-storage', 'download-storage', 'list-storage', 'queue-status', 'queue-cancel', 'queue-retry', 'queue-run'];
 
 /** Short aliases for common storage commands */
 const COMMAND_ALIASES: Record<string, string> = {

@@ -99,10 +99,11 @@ async function selectNewFiles(
     return { candidates: files.map(filePath => ({ filePath, contentHash: null })), skipped: 0 };
   }
 
-  const { completedContentHashes } = await import('../queue/queue-manager.js');
+  const { knownContentHashes } = await import('../queue/queue-manager.js');
   const { hashFile } = await import('../storage/checksum-utils.js');
   // One query for the whole chat: a directory enqueue checks thousands of files.
-  const alreadyUploaded = completedContentHashes(account, options.chatId);
+  // Includes work already queued, so resuming tops the queue up rather than doubling it.
+  const alreadyUploaded = knownContentHashes(account, options.chatId);
 
   const candidates: { filePath: string; contentHash: string | null }[] = [];
   let skipped = 0;

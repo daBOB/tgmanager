@@ -1,6 +1,7 @@
 // src/commands/queue-cancel-command.ts
 import { basename } from 'node:path';
 import { listJobs, cancelJob } from '../queue/queue-manager.js';
+import { resolveJobId } from './queue-job-id-resolver.js';
 import { print, printError } from '../utils/console-output.js';
 
 /**
@@ -11,46 +12,28 @@ import { print, printError } from '../utils/console-output.js';
  * @returns true on success, false on error
  */
 export function queueCancelCommand(account: string, jobId: string): boolean {
-  const jobs = listJobs(account);
+  const resolution = resolveJobId(listJobs(account), jobId);
 
-  // Find matching jobs (support partial ID)
-  const matches = jobId.length < 36
-    ? jobs.filter(job => job.id.startsWith(jobId))
-    : jobs.filter(job => job.id === jobId);
-
-  // No matches
-  if (matches.length === 0) {
+  if (resolution.kind === 'none') {
     printError(`Error: No job found with ID starting with "${jobId}"`);
     return false;
   }
 
-  // Multiple matches (ambiguous)
-  if (matches.length > 1) {
+  if (resolution.kind === 'ambiguous') {
     printError(`Error: Ambiguous job ID "${jobId}". Multiple matches found:`);
-    for (const match of matches) {
-      printError(`  - ${match.id.substring(0, 8)} (${basename(match.filePath)})`);
+    for (const match of resolution.matches) {
+      printError(`  ${match.id.substring(0, 8)}  ${basename(match.filePath)}  (${match.status})`);
     }
     return false;
   }
 
-  // Single match found
-  const job = matches[0]!;
+  const { job } = resolution;
 
-  // Check if job can be cancelled (must be pending)
-  if (job.status !== 'pending') {
-    printError(`Cannot cancel: status is ${job.status}`);
+  if (!cancelJob(account, job.id)) {
+    printError(`Error: Job ${job.id.substring(0, 8)} is ${job.status} and can no longer be cancelled`);
     return false;
   }
 
-  // Cancel the job
-  const success = cancelJob(account, job.id);
-
-  if (!success) {
-    printError(`Failed to cancel job ${job.id.substring(0, 8)}`);
-    return false;
-  }
-
-  // Success
-  print(`Cancelled job ${job.id.substring(0, 8)} (${basename(job.filePath)})`);
+  print(`\u2713 Cancelled "${basename(job.filePath)}"`);
   return true;
 }

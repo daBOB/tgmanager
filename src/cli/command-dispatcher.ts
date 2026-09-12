@@ -125,6 +125,11 @@ async function runQueueOnlyCommand(options: CommandOptions, account: string): Pr
     return 0;
   }
 
+  if (options.command === 'queue-retry') {
+    const { queueRetryCommand } = await import('../commands/queue-retry-command.js');
+    return queueRetryCommand(account, options.name) ? 0 : 1;
+  }
+
   if (options.command === 'queue-cancel' && options.name) {
     const { queueCancelCommand } = await import('../commands/queue-cancel-command.js');
     return queueCancelCommand(account, options.name) ? 0 : 1;

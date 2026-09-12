@@ -52,6 +52,9 @@ export async function routeCommand(ctx: CommandContext): Promise<number> {
   switch (options.command) {
     // Both upload kinds are queued before the lock is taken, so the work here
     // is the same: drain whatever this account has waiting.
+    // Drains whatever is already queued, without enqueueing anything new — the
+    // way a killed run resumes without re-pointing at its source directory.
+    case 'queue-run':
     case 'upload':
     case 'upload-storage': {
       const { startWorker } = await import('../queue/queue-worker.js');

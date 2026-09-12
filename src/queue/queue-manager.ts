@@ -4,6 +4,7 @@
 // read-modify-write window for a concurrent process to fall into — the
 // lockfile the JSON implementation needed is gone.
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import logger from '../logger.js';
 import type { QueueJob, QueueAddOptions, QueueListFilter } from './queue-types.js';
 import { getDb, getQueueDir, getQueueDbPath, inTransaction } from './queue-database.js';
@@ -293,19 +294,84 @@ export async function pollJobStatus(
 }
 
 /**
- * Content hashes already uploaded to a chat, as one set.
+ * Content hashes a chat already has, or is about to get.
+ *
+ * Covers completed jobs *and* work still queued: re-pointing at a half-uploaded
+ * directory would otherwise queue every not-yet-finished file a second time, so
+ * a resumed run uploads it twice.
+ *
+ * Failed and cancelled jobs are excluded deliberately — neither put anything in
+ * the channel, so neither may block another attempt.
  *
  * Returned in bulk rather than queried per file: enqueueing a directory checks
  * thousands of candidates, and one query beats thousands of round trips.
- * Only jobs that actually completed count — a failed or cancelled job did not
- * put anything in the channel.
  */
-export function completedContentHashes(account: string, chatId: string): Set<string> {
+export function knownContentHashes(account: string, chatId: string): Set<string> {
   const rows = getDb()
     .prepare(`SELECT DISTINCT content_hash FROM jobs
-              WHERE account = ? AND chat_id = ? AND status = 'completed'
+              WHERE account = ? AND chat_id = ?
+                AND status IN ('completed', 'pending', 'processing')
                 AND content_hash IS NOT NULL`)
     .all(account, chatId) as unknown as { content_hash: string }[];
 
   return new Set(rows.map(r => r.content_hash));
+}
+
+/** Fields cleared when a job is sent back to the queue. */
+const RESET_TO_PENDING = `status = 'pending', error = NULL, started_at = NULL,
+                          completed_at = NULL, worker_pid = NULL`;
+
+/**
+ * Return every failed job to the queue.
+ *
+ * A failure is not necessarily permanent — a transient upload error, or a bug
+ * since fixed — but `failed` is terminal, so without this the job can never run
+ * again.
+ */
+export function retryFailedJobs(account: string): RetryOutcome {
+  const db = getDb();
+  const failed = asJobRows(db
+    .prepare(`SELECT * FROM jobs WHERE account = ? AND status = 'failed'`)
+    .all(account)).map(rowToJob);
+
+  // A job whose source file is gone cannot succeed — it would be claimed only
+  // to fail again on ENOENT. Uploading with --delete-source removes each file
+  // as it lands, so a failure that was later retried successfully leaves
+  // exactly this: a stale failed row pointing at a path that no longer exists.
+  const runnable = failed.filter(job => existsSync(job.filePath));
+  const missing = failed.length - runnable.length;
+
+  const reset = db.prepare(`UPDATE jobs SET ${RESET_TO_PENDING} WHERE id = ?`);
+  inTransaction(db, () => {
+    for (const job of runnable) reset.run(job.id);
+  });
+
+  if (runnable.length > 0) logger.info(`Requeued ${runnable.length} failed jobs`, { account });
+  if (missing > 0) logger.info(`Skipped ${missing} failed jobs whose source file is gone`, { account });
+
+  return { requeued: runnable.length, skippedMissing: missing };
+}
+
+/** What a bulk retry did. */
+export interface RetryOutcome {
+  requeued: number;
+  /** Jobs left alone because their source file no longer exists. */
+  skippedMissing: number;
+}
+
+/**
+ * Return one job to the queue, whatever state it is in.
+ *
+ * Also covers a job wedged in `processing` by a worker that is still alive but
+ * no longer making progress — the case stale recovery cannot detect, since that
+ * only looks for dead processes.
+ */
+export function retryJob(account: string, jobId: string): boolean {
+  const changed = asCount(getDb()
+    .prepare(`UPDATE jobs SET ${RESET_TO_PENDING}
+              WHERE id = ? AND account = ? AND status != 'pending'`)
+    .run(jobId, account).changes);
+
+  if (changed > 0) logger.info('Requeued job', { account, jobId });
+  return changed > 0;
 }
