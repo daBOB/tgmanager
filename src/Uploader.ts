@@ -80,8 +80,12 @@ export class Uploader {
   ): Promise<boolean> {
     const fileName = basename(filePath);
     const fileSize = (await stat(filePath)).size;
+    // Explicit format: the preset's default includes `ETA: {eta}s`, and
+    // cli-progress renders an uncomputable ETA as the literal "NULL" — which is
+    // exactly what happens as a transfer completes. Percentage only, matching
+    // the storage progress bars.
     const progressBar = new cliProgress.SingleBar(
-      { etaAsynchronousUpdate: true, etaBuffer: 40, fps: 5 },
+      { format: 'Uploading |{bar}| {percentage}%', fps: 5 },
       cliProgress.Presets.shades_classic
     );
 

@@ -13,6 +13,7 @@ import { AuthKeyDuplicatedError, handleError, isAuthKeyDuplicatedError } from '.
 import { handleUploadStorageQueue } from './upload-storage-queue-handler.js';
 import { routeCommand } from './command-router.js';
 import { print, printError } from '../utils/console-output.js';
+import { createGramjsLogger } from '../utils/gramjs-winston-logger.js';
 import type { CommandOptions } from '../types/index.js';
 
 /** Create and connect a Telegram client for the given account. */
@@ -29,7 +30,14 @@ export const startClient = async (account_name: string): Promise<TelegramClient>
 
   const client = new TelegramClient(session, apiId, apiHash, {
     connectionRetries: config.telegram.connectionRetries,
-    useWSS: config.telegram.useWSS
+    useWSS: config.telegram.useWSS,
+    // gramjs otherwise swallows any flood wait at or below 60s: it sleeps
+    // inside the request loop and never raises error 420, so our retry
+    // handling — including pausing the progress bar — only ran for waits
+    // longer than a minute. At 0 every flood wait surfaces and is handled
+    // here, with the configured multiplier and visible output.
+    floodSleepThreshold: 0,
+    baseLogger: createGramjsLogger(config.app.logLevel)
   });
 
   // gramjs types `on` without the (event, handler) overload even though the
