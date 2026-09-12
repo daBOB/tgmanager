@@ -17,8 +17,21 @@ try {
 // Winston types every field on the log record as `unknown` — any transport can
 // put anything there — so interpolating one directly is unchecked. Callers pass
 // strings in practice; this keeps a non-string from rendering as "[object Object]".
-const asText = (value: unknown): string =>
-  typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+//
+// Only objects go through JSON.stringify. Routing primitives through it too
+// would print NaN and Infinity as "null", since JSON has no representation for
+// either; String() reports them as themselves.
+const asText = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (typeof value !== 'object' || value === null) return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    // JSON.stringify throws on circular structures. Emitting a log line must
+    // never be the thing that brings the process down.
+    return '[unserializable]';
+  }
+};
 
 // Custom format for console output
 const consoleFormat = winston.format.combine(
