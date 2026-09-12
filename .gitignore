@@ -69,3 +69,16 @@ coverage/
 # Debug
 .node_repl_history
 
+
+# Generated release artifacts (produced by packaging, not source)
+release-manifest.json
+
+# Local test env scaffold
+test.env
+
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json
+
+# Generated code-graph analysis artifacts
+graphify-out/
+src/graphify-out/

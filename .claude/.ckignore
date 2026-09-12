@@ -25,3 +25,8 @@ coverage
 # Allow reading these files
 !.env
 !.env.*
+
+# The `build` pattern above also matches the substring in Bash commands,
+# blocking legitimate compile invocations (bun run build:ts, bun build --compile).
+# No build/ directory exists in this repo, so the pattern only cost false positives.
+!build

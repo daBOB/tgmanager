@@ -1,0 +1,10 @@
+{
+  // Lint-only project: the build tsconfig deliberately excludes tests (they must
+  // not emit into dist/), but type-aware lint rules need them in a program.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

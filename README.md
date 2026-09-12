@@ -288,26 +288,22 @@ npm start
 
 ## Building Binaries
 
-Build TypeScript and create binaries for all platforms:
+Binaries are compiled with Bun. Build all four targets:
 ```bash
-npm run build
+bun run build-native
 ```
 
-Build for specific platform:
+Build a single platform:
 ```bash
-# First build TypeScript
-npm run build:ts
-
-# Then package for your platform
-# Windows
-pkg dist/index.js --target node22-win-x64 --output dist/tgmanager.exe
-
-# macOS
-pkg dist/index.js --target node22-macos-x64 --output dist/tgmanager
-
-# Linux
-pkg dist/index.js --target node22-linux-x64 --output dist/tgmanager
+# linux-x64 (swap the target for bun-linux-arm64, bun-windows-x64, bun-darwin-x64)
+bun build src/index.ts --compile --minify --target=bun-linux-x64 --outfile dist/uploader-linux
 ```
+
+> **Image resizing is unavailable in the standalone binaries.** `bun build
+> --compile` cannot embed native addons, so `sharp` does not load there and
+> images are uploaded without resizing. Telegram rejects images beyond its
+> dimension limits, so use the Docker image (`bun run build-docker`) or run from
+> source if you upload oversized images.
 
 ### Using Standalone Executables
 
@@ -515,7 +511,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Logging**: Winston with rotation
 - **CLI**: Commander.js
 - **Testing**: Vitest
-- **Build**: esbuild (bundling) + pkg (native binaries)
+- **Build**: Bun (`bun build --compile` for native binaries)
 
 ## Acknowledgments
 
