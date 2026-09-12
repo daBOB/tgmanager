@@ -10,7 +10,7 @@ import { print, printError } from '../utils/console-output.js';
  * @param jobId - Full or partial job ID to cancel
  * @returns true on success, false on error
  */
-export async function queueCancelCommand(account: string, jobId: string): Promise<boolean> {
+export function queueCancelCommand(account: string, jobId: string): boolean {
   const jobs = listJobs(account);
 
   // Find matching jobs (support partial ID)

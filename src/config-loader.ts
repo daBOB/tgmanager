@@ -14,7 +14,7 @@ export const loadConfig = (): void => {
     // 1. Command-line specified path
     process.env.TGMANAGER_CONFIG,
     // 2. Current working directory (may fail if CWD doesn't exist)
-    (() => { try { return join(process.cwd(), '.env'); } catch { return ''; } })(),
+    ((): string => { try { return join(process.cwd(), '.env'); } catch { return ''; } })(),
     // 3. Next to the executable/project root
     join(baseDir, '.env'),
     // 4. User's home config directory

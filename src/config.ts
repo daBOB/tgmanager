@@ -78,11 +78,11 @@ const config: Config = {
   // Application settings
   app: {
     logLevel: process.env.LOG_LEVEL || 'info',
-    maxConcurrentUploads: (() => {
+    maxConcurrentUploads: ((): number => {
       const parsed = parseInt(process.env.MAX_CONCURRENT_UPLOADS || '1', 10);
       return isNaN(parsed) ? 1 : Math.max(1, parsed);
     })(),
-    uploadTimeout: (() => {
+    uploadTimeout: ((): number => {
       const parsed = parseInt(process.env.UPLOAD_TIMEOUT || '600000', 10);
       return isNaN(parsed) ? 600000 : parsed;
     })(),

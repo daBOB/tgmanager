@@ -87,7 +87,9 @@ export async function downloadChunk(
   const result = await withFloodWaitRetry(
     () => client.downloadMedia(message, {
       outputFile: outputPath,
-      progressCallback: onProgress ? (downloaded: any) => {
+      // gramjs reports progress as either a number or a BigInteger depending on
+      // the transfer path, so the fraction is normalised before scaling.
+      progressCallback: onProgress ? (downloaded: unknown): void => {
         const progress = typeof downloaded === 'number' ? downloaded : Number(downloaded);
         onProgress(progress * 100);
       } : undefined,

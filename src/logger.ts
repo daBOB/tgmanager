@@ -14,12 +14,18 @@ try {
   fileLoggingAvailable = false;
 }
 
+// Winston types every field on the log record as `unknown` — any transport can
+// put anything there — so interpolating one directly is unchecked. Callers pass
+// strings in practice; this keeps a non-string from rendering as "[object Object]".
+const asText = (value: unknown): string =>
+  typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+
 // Custom format for console output
 const consoleFormat = winston.format.combine(
   winston.format.colorize(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
-    let msg = `${timestamp} [${level}]: ${message}`;
+    let msg = `${asText(timestamp)} [${level}]: ${asText(message)}`;
     if (Object.keys(meta).length > 0) {
       msg += ` ${JSON.stringify(meta)}`;
     }
@@ -32,7 +38,7 @@ const fileFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.errors({ stack: true }),
   winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-    let msg = `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    let msg = `${asText(timestamp)} [${level.toUpperCase()}]: ${asText(message)}`;
     if (Object.keys(meta).length > 0) {
       msg += ` ${JSON.stringify(meta)}`;
     }

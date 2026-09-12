@@ -88,6 +88,23 @@ export class AuthKeyDuplicatedError extends Error {
 const AUTH_KEY_DUPLICATED_CODE = 406;
 
 /**
+ * Read the `code` off a thrown value, whatever it turns out to be.
+ *
+ * Node attaches string errno codes ('EIO', 'ENOENT') to filesystem and process
+ * errors, while the Telegram client attaches numeric ones. Neither is on the
+ * `Error` type, and `catch` binds `unknown`, so every call site used to reach
+ * through an `any` cast. This narrows once instead.
+ *
+ * @returns the code, or undefined when the value carries none.
+ */
+export function getErrorCode(error: unknown): string | number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+
+  const { code } = error as { code?: unknown };
+  return typeof code === 'string' || typeof code === 'number' ? code : undefined;
+}
+
+/**
  * Recognise an AUTH_KEY_DUPLICATED failure from any of the shapes it arrives in:
  * our own error class, a raw API error carrying code 406, or a plain Error whose
  * message embeds the code name.
@@ -134,7 +151,7 @@ export function handleError(error: Error, context: ErrorContext = {}): string {
     logger.error(error.message, {
       errorType: error.name || 'UnknownError',
       stack: error.stack,
-      code: (error as any).code,
+      code: getErrorCode(error),
       ...(error instanceof TelegramUploadError ? error.details : {}),
       ...context
     });

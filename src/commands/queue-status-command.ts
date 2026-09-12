@@ -10,7 +10,7 @@ import { print } from '../utils/console-output.js';
  * @param account - Account identifier
  * @returns true on success, false on error
  */
-export async function queueStatusCommand(account: string): Promise<boolean> {
+export function queueStatusCommand(account: string): boolean {
   const jobs = listJobs(account);
 
   if (jobs.length === 0) {

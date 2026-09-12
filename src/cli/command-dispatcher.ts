@@ -56,9 +56,12 @@ export const startClient = async (account_name: string): Promise<TelegramClient>
 
   try {
     await client.start({
-      phoneNumber: async () => phoneNumber,
-      password: async () => password || '',
-      phoneCode: async () => await promptText('Please enter the code you received: '),
+      // These are credential *providers*: the client calls them on demand and
+      // expects a promise back. The first two already have their value in hand,
+      // so they resolve immediately rather than opening an async frame.
+      phoneNumber: () => Promise.resolve(phoneNumber),
+      password: () => Promise.resolve(password || ''),
+      phoneCode: () => promptText('Please enter the code you received: '),
       onError: (err: Error) => {
         if (isAuthKeyDuplicatedError(err)) throw new AuthKeyDuplicatedError();
         logger.error('Authentication error', { error: err.message });
@@ -105,13 +108,13 @@ function ensureUsableWorkingDirectory(): boolean {
 async function runQueueOnlyCommand(options: CommandOptions, account: string): Promise<number | null> {
   if (options.command === 'queue-status') {
     const { queueStatusCommand } = await import('../commands/queue-status-command.js');
-    await queueStatusCommand(account);
+    queueStatusCommand(account);
     return 0;
   }
 
   if (options.command === 'queue-cancel' && options.name) {
     const { queueCancelCommand } = await import('../commands/queue-cancel-command.js');
-    return (await queueCancelCommand(account, options.name)) ? 0 : 1;
+    return queueCancelCommand(account, options.name) ? 0 : 1;
   }
 
   return null;

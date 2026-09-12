@@ -67,7 +67,9 @@ export async function initializeStorageChannel(
     })
   );
 
-  const channel = (result as any).chats?.[0] as Api.Channel;
+  // CreateChannel resolves to an Updates variant carrying the new channel in
+  // `chats`; the declared TypeUpdates union does not narrow to that member.
+  const channel = (result as { chats?: Api.Channel[] }).chats?.[0];
   if (!channel) {
     throw new Error('Failed to create storage channel');
   }

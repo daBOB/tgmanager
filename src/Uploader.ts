@@ -7,7 +7,13 @@ import config from './config.js';
 import { getVideoInfo } from './uploader/video-metadata-extractor.js';
 import { withFloodWaitRetryAndProgress } from './uploader/flood-wait-retry-handler.js';
 import { uploadImageWithResize } from './uploader/image-resize-and-upload.js';
+import { getErrorCode } from './utils/errors.js';
 import type { TelegramClient, UploadOptions } from './types/index.js';
+
+/** The one EventEmitter method used on the client; see the constructor. */
+interface UpdateEmitter {
+  on(event: 'update', handler: (update: Api.TypeUpdate) => void): void;
+}
 
 export class Uploader {
   private client: TelegramClient;
@@ -16,8 +22,11 @@ export class Uploader {
 
   constructor(client: TelegramClient) {
     this.client = client;
-    (this.client as any).on('update', (update: Api.TypeUpdate) => {
-      logger.debug('Telegram update received', { updateType: (update as any).className });
+    // gramjs is an EventEmitter at runtime but does not declare `on` in its
+    // public types, which only expose addEventHandler. Cast to the narrow
+    // surface actually used rather than letting `any` leak into the callback.
+    (this.client as unknown as UpdateEmitter).on('update', (update) => {
+      logger.debug('Telegram update received', { updateType: update.className });
     });
   }
 
@@ -94,7 +103,7 @@ export class Uploader {
       logger.error(errorMessage, {
         fileName, chatId,
         error: (error as Error).message,
-        code: (error as any).code
+        code: getErrorCode(error)
       });
       return false;
     }

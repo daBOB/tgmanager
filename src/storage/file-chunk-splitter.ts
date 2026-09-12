@@ -7,6 +7,7 @@ import type { FileHandle } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { FileManifest } from './manifest-manager.js';
+import { getErrorCode } from '../utils/errors.js';
 import {
   createManifest,
   addChunkToManifest,
@@ -58,11 +59,12 @@ async function readWithRetry(
     try {
       const result = await fd.read(buffer, offset, length, position);
       return result.bytesRead;
-    } catch (err: any) {
-      const isTransient = err?.code === 'EIO' || err?.code === 'EAGAIN';
+    } catch (err) {
+      const code = getErrorCode(err);
+      const isTransient = code === 'EIO' || code === 'EAGAIN';
       if (isTransient && attempt < MAX_IO_RETRIES) {
         logger.warn(`I/O error at byte ${position}, retry ${attempt}/${MAX_IO_RETRIES} in ${IO_RETRY_DELAY_MS / 1000}s...`, {
-          code: err.code
+          code
         });
         await new Promise(r => setTimeout(r, IO_RETRY_DELAY_MS));
         continue;

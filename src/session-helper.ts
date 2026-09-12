@@ -29,7 +29,7 @@ export function createSession(sessionDir: string): Session {
     
     // Override save method to persist to file
     const originalSave = session.save.bind(session);
-    session.save = function() {
+    session.save = function (): string {
       const result = originalSave();
       writeFileSync(sessionFile, result, 'utf-8');
       // Best-effort: session file is still usable if the mode can't be tightened

@@ -1,10 +1,16 @@
 // Flat config (ESLint 10 + typescript-eslint 8).
 //
-// Rule tiering rationale: the `no-unsafe-*` / `no-explicit-any` family flags
-// *type-system* weakness, not defects. Those sites are tracked as tech debt and
-// burn down gradually, so they are warnings — they must not block CI. Rules that
-// catch genuine bugs (floating promises, misused promises, unused bindings) stay
-// errors and do fail the build.
+// The `no-unsafe-*` / `no-explicit-any` family was tiered down to warnings while
+// a backlog of untyped sites burned down. That backlog is now empty, so the
+// rules are errors: src/ reaches zero, and the gate keeps it there rather than
+// letting `any` creep back one warning at a time.
+//
+// Where an external library genuinely has no usable type — gramjs returns broad
+// unions and omits its EventEmitter surface — the fix is a narrow local
+// interface and a checked cast at the boundary, not a blanket `any`.
+//
+// Tests keep the looser settings below: test doubles must be free to fake
+// loosely-typed API shapes.
 import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
@@ -36,16 +42,16 @@ export default tseslint.config(
       'prefer-const': 'error',
       'no-var': 'error',
 
-      // --- Warnings: type-safety debt, tracked but non-blocking ---
-      '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unsafe-assignment': 'warn',
-      '@typescript-eslint/no-unsafe-member-access': 'warn',
-      '@typescript-eslint/no-unsafe-call': 'warn',
-      '@typescript-eslint/no-unsafe-return': 'warn',
-      '@typescript-eslint/no-unsafe-argument': 'warn',
-      '@typescript-eslint/explicit-function-return-type': 'warn',
-      '@typescript-eslint/restrict-template-expressions': 'warn',
-      '@typescript-eslint/require-await': 'warn',
+      // --- Errors: type-safety floor, currently at zero ---
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'error',
+      '@typescript-eslint/no-unsafe-member-access': 'error',
+      '@typescript-eslint/no-unsafe-call': 'error',
+      '@typescript-eslint/no-unsafe-return': 'error',
+      '@typescript-eslint/no-unsafe-argument': 'error',
+      '@typescript-eslint/explicit-function-return-type': 'error',
+      '@typescript-eslint/restrict-template-expressions': 'error',
+      '@typescript-eslint/require-await': 'error',
 
       // CLI writes user-facing output through src/utils/console-output.ts;
       // that module is the single allowed console site (see override below).

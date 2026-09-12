@@ -37,7 +37,7 @@ export async function uploadChunk(
     () => client.sendFile(channelId, {
       file: chunkPath,
       caption,
-      progressCallback: onProgress ? (p: number) => onProgress(p * 100) : undefined,
+      progressCallback: onProgress ? (p: number): void => onProgress(p * 100) : undefined,
     }),
     { multiplier: floodWaitMultiplier, context: { fileId: manifest.fileId, chunkIndex } }
   );
@@ -78,7 +78,7 @@ export async function uploadAllChunks(
     const chunkPath = join(chunksDir, chunk.filename);
     const messageId = await uploadChunk(
       client, channelId, chunkPath, updatedManifest, chunk.index, floodWaitMultiplier,
-      onProgress ? (p) => {
+      onProgress ? (p: number): void => {
         const chunkProgress = (p / 100) * chunk.size;
         onProgress({
           chunkIndex: chunk.index,
@@ -124,14 +124,16 @@ export async function uploadManifest(
   const tempPath = join(tmpdir(), `${manifest.fileId}.manifest.json`);
   await writeFile(tempPath, manifestJson, 'utf-8');
 
-  const message = await client.sendFile(channelId, { file: tempPath, caption });
+  // sendFile is declared as returning the broad Message union; every variant it
+  // can actually return here carries a numeric id.
+  const message: { id: number } = await client.sendFile(channelId, { file: tempPath, caption });
 
   await unlink(tempPath).catch(() => {});
 
   logger.info('Manifest uploaded as file (exceeded message limit)', {
     fileId: manifest.fileId,
-    messageId: (message as any).id,
+    messageId: message.id,
     size: manifestJson.length
   });
-  return (message as any).id;
+  return message.id;
 }

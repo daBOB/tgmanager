@@ -5,6 +5,7 @@ import type { TelegramClient } from '../types/index.js';
 import type { StorageService } from '../storage/storage-service.js';
 import { splitFile, cleanupChunks } from '../storage/file-splitter.js';
 import { saveManifest, updateManifestStatus, getManifestPath } from '../storage/manifest-manager.js';
+import type { FileManifest } from '../storage/manifest-manager.js';
 import logger from '../logger.js';
 import config from '../config.js';
 import type { UploadStorageOptions } from './upload-storage-types.js';
@@ -27,7 +28,9 @@ export async function uploadWithSplitting(
   const splitBar = createSplitProgressBar();
   splitBar.start(100, 0, { currentChunk: 0, totalChunks: '?' });
 
-  let manifest: any = null;
+  // Declared outside the try so the catch can still clean up chunks that were
+  // written before the failure.
+  let manifest: FileManifest | null = null;
 
   try {
     const result = await splitFile(filePath, {
