@@ -400,6 +400,7 @@ describe('schema migration', () => {
       .map(c => c.name);
     expect(columns).toContain('kind');
     expect(columns).toContain('chat_id');
+    expect(columns).toContain('content_hash');
 
     // The pre-existing row survives and reads back as a storage job.
     const { getJob } = await queue();

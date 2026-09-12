@@ -45,6 +45,9 @@ export interface QueueJob {
   /** Optional Telegram channel ID for storage (if not default) */
   storageChannelId?: string;
 
+  /** SHA-256 of the file when queued; null when it was not computed. */
+  contentHash: string | null;
+
   /** Whether to delete source file after successful upload */
   deleteSource: boolean;
 
@@ -92,6 +95,9 @@ export interface QueueAddOptions {
 
   /** Optional Telegram channel ID for storage (if not default) */
   storageChannelId?: string;
+
+  /** SHA-256 of the file, for duplicate detection. */
+  contentHash?: string | null;
 
   /** Whether to delete source file after successful upload (default: false) */
   deleteSource?: boolean;

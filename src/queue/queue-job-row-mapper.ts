@@ -12,6 +12,7 @@ export interface JobRow {
   virtual_path: string | null;
   chat_id: string | null;
   storage_channel_id: string | null;
+  content_hash: string | null;
   delete_source: number;
   status: string;
   priority: number;
@@ -31,6 +32,7 @@ export function rowToJob(row: JobRow): QueueJob {
     filePath: row.file_path,
     virtualPath: row.virtual_path,
     chatId: row.chat_id,
+    contentHash: row.content_hash,
     // The column is nullable, but the field is optional — keep undefined rather
     // than leaking null into callers that spread this back into options.
     storageChannelId: row.storage_channel_id ?? undefined,
@@ -56,6 +58,7 @@ export function jobToInsertParams(account: string, job: QueueJob): unknown[] {
     job.virtualPath,
     job.chatId,
     job.storageChannelId ?? null,
+    job.contentHash,
     job.deleteSource ? 1 : 0,
     job.status,
     job.priority,

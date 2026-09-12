@@ -205,7 +205,7 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
     if (options.command === 'upload' && uploadPath && options.chatId) {
       const { addJobs } = await import('../queue/queue-manager.js');
       const { handleUploadChannelQueue } = await import('./upload-channel-queue-handler.js');
-      const outcome = handleUploadChannelQueue(account, uploadPath, options, addJobs);
+      const outcome = await handleUploadChannelQueue(account, uploadPath, options, addJobs);
       if (outcome.kind === 'done') return outcome.exitCode;
       queuedJobIds = outcome.jobIds;
     }

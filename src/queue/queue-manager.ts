@@ -15,10 +15,10 @@ export { getQueueDir, getQueueDbPath };
 
 const INSERT_SQL = `
   INSERT INTO jobs (id, account, kind, file_path, virtual_path, chat_id,
-                    storage_channel_id, delete_source, status, priority,
-                    scheduled_at, created_at, started_at, completed_at, error,
-                    worker_pid)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+                    storage_channel_id, content_hash, delete_source, status,
+                    priority, scheduled_at, created_at, started_at,
+                    completed_at, error, worker_pid)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 /**
  * Ordering shared by claiming and by queue position, so the two agree.
@@ -41,6 +41,7 @@ function buildJob(options: QueueAddOptions): QueueJob {
     filePath: options.filePath,
     virtualPath: options.virtualPath ?? null,
     chatId: options.chatId ?? null,
+    contentHash: options.contentHash ?? null,
     storageChannelId: options.storageChannelId,
     deleteSource: options.deleteSource ?? false,
     status: 'pending',
@@ -285,4 +286,22 @@ export async function pollJobStatus(
   intervalMs: number = 500
 ): Promise<boolean> {
   return pollJobStatusUntilDone(getJob, account, jobId, intervalMs);
+}
+
+/**
+ * Content hashes already uploaded to a chat, as one set.
+ *
+ * Returned in bulk rather than queried per file: enqueueing a directory checks
+ * thousands of candidates, and one query beats thousands of round trips.
+ * Only jobs that actually completed count — a failed or cancelled job did not
+ * put anything in the channel.
+ */
+export function completedContentHashes(account: string, chatId: string): Set<string> {
+  const rows = getDb()
+    .prepare(`SELECT DISTINCT content_hash FROM jobs
+              WHERE account = ? AND chat_id = ? AND status = 'completed'
+                AND content_hash IS NOT NULL`)
+    .all(account, chatId) as unknown as { content_hash: string }[];
+
+  return new Set(rows.map(r => r.content_hash));
 }

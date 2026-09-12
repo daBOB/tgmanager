@@ -27,7 +27,7 @@ export function getQueueDbPath(): string {
   return join(getQueueDir(), 'queue.db');
 }
 
-const SCHEMA = `
+const TABLE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS jobs (
   id                 TEXT PRIMARY KEY,
   account            TEXT    NOT NULL,
@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   virtual_path       TEXT,
   chat_id            TEXT,
   storage_channel_id TEXT,
+  -- SHA-256 of the file as queued. Lets a later enqueue tell that the same
+  -- bytes already reached this chat, whatever the file was called.
+  content_hash       TEXT,
   delete_source      INTEGER NOT NULL DEFAULT 0,
   status             TEXT    NOT NULL,
   priority           INTEGER NOT NULL DEFAULT 0,
@@ -48,11 +51,19 @@ CREATE TABLE IF NOT EXISTS jobs (
   error              TEXT,
   worker_pid         INTEGER
 );
+`;
 
+// Created after migrate(), since an index cannot reference a column that an
+// older database has not been given yet.
+const INDEX_SCHEMA = `
 -- Drives the claim query: highest priority first, then oldest, skipping jobs
 -- whose scheduled time has not arrived.
 CREATE INDEX IF NOT EXISTS idx_jobs_claim
   ON jobs(account, status, priority DESC, scheduled_at, created_at);
+
+-- Answers "have these bytes already gone to this chat?" without scanning.
+CREATE INDEX IF NOT EXISTS idx_jobs_content
+  ON jobs(account, chat_id, content_hash);
 
 -- Drives history browsing, which is newest-first.
 CREATE INDEX IF NOT EXISTS idx_jobs_history
@@ -79,8 +90,9 @@ export function getDb(path: string = getQueueDbPath()): DatabaseSync {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA synchronous = NORMAL');
-  db.exec(SCHEMA);
+  db.exec(TABLE_SCHEMA);
   migrate(db);
+  db.exec(INDEX_SCHEMA);
 
   connections.set(path, db);
   return db;
@@ -104,6 +116,9 @@ function migrate(db: DatabaseSync): void {
   }
   if (!columns.has('chat_id')) {
     db.exec('ALTER TABLE jobs ADD COLUMN chat_id TEXT');
+  }
+  if (!columns.has('content_hash')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN content_hash TEXT');
   }
 }
 
