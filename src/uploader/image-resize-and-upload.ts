@@ -3,6 +3,7 @@ import { basename, extname } from 'node:path';
 import { getSharp } from '../utils/sharp-loader.js';
 import logger from '../logger.js';
 import config from '../config.js';
+import { computeTargetDimensions } from './image-dimension-calculator.js';
 
 /** Performs the Telegram upload; `forceDocument` suppresses photo handling. */
 type ImageUploadFn = (path: string, forceDocument: boolean) => Promise<boolean>;
@@ -49,6 +50,7 @@ export async function uploadImageWithResize(
   }
 
   try {
+    const { size } = await stat(filePath);
     const metadata = await sharp(filePath).metadata();
     const { width = 0, height = 0 } = metadata;
 
@@ -61,11 +63,19 @@ export async function uploadImageWithResize(
       return sendSizedImage(filePath, uploadFn);
     }
 
-    const MAX_DIMENSION = config.fileProcessing.image.maxDimension;
-    const MAX_COMBINED = config.fileProcessing.image.maxCombinedDimensions;
+    const image = config.fileProcessing.image;
 
-    if (width > MAX_DIMENSION || height > MAX_DIMENSION || (width + height) > MAX_COMBINED) {
-      return resizeAndUpload(sharp, filePath, width, height, uploadFn);
+    // Two independent reasons to shrink. Dimensions are the obvious one; size
+    // is the one that bit us, because a moderately sized image can still be far
+    // too many bytes to send as a photo.
+    const exceedsPhotoBytes = size > image.maxPhotoBytes;
+    const exceedsDimensions =
+      width > image.maxDimension ||
+      height > image.maxDimension ||
+      (width + height) > image.maxCombinedDimensions;
+
+    if (exceedsPhotoBytes || exceedsDimensions) {
+      return resizeAndUpload(sharp, filePath, width, height, exceedsPhotoBytes, uploadFn);
     }
 
     logger.debug('Using original dimensions', { width, height, file: basename(filePath) });
@@ -80,41 +90,42 @@ export async function uploadImageWithResize(
   }
 }
 
-/** Resize image to fit within Telegram dimension limits and upload. Cleans up temp file. */
+/**
+ * Resize an image to fit Telegram's limits and upload it. Cleans up the temp file.
+ *
+ * @param fitPhotoLimit - shrink hard enough to clear the photo *size* limit,
+ *   not just the dimension limits. Triggers JPEG re-encoding, since re-encoding
+ *   a PNG losslessly can leave it just as large.
+ */
 async function resizeAndUpload(
   sharp: NonNullable<Awaited<ReturnType<typeof getSharp>>>,
   filePath: string,
   width: number,
   height: number,
+  fitPhotoLimit: boolean,
   uploadFn: ImageUploadFn
 ): Promise<boolean> {
-  const MAX_DIMENSION = config.fileProcessing.image.maxDimension;
-  const MAX_COMBINED = config.fileProcessing.image.maxCombinedDimensions;
-  const aspectRatio = width / height;
-
-  // Fit within combined and per-axis limits while preserving aspect ratio
-  let newWidth = Math.min(Math.sqrt(MAX_COMBINED * aspectRatio), MAX_DIMENSION);
-  let newHeight = newWidth / aspectRatio;
-
-  if (newHeight > MAX_DIMENSION) {
-    newHeight = MAX_DIMENSION;
-    newWidth = newHeight * aspectRatio;
-  }
-
-  newWidth = Math.floor(newWidth);
-  newHeight = Math.floor(newHeight);
+  const image = config.fileProcessing.image;
+  const { width: newWidth, height: newHeight } =
+    computeTargetDimensions(width, height, image, fitPhotoLimit);
 
   logger.info('Resizing image', {
     original: `${width}x${height}`,
     new: `${newWidth}x${newHeight}`,
+    reason: fitPhotoLimit ? 'photo size limit' : 'dimension limit',
     file: basename(filePath)
   });
 
-  const extension = extname(filePath).toLowerCase();
+  const extension = fitPhotoLimit ? '.jpg' : extname(filePath).toLowerCase();
   const resizedFilePath = `${filePath}_resized${extension}`;
-  await sharp(filePath).resize(newWidth, newHeight).toFile(resizedFilePath);
+
+  const pipeline = sharp(filePath).resize(newWidth, newHeight);
+  await (fitPhotoLimit ? pipeline.jpeg({ quality: image.photoJpegQuality }) : pipeline)
+    .toFile(resizedFilePath);
 
   try {
+    // Re-checked rather than assumed: an image that still cannot fit falls back
+    // to a document upload instead of failing the send.
     return await sendSizedImage(resizedFilePath, uploadFn);
   } finally {
     await unlink(resizedFilePath).catch(() => {});

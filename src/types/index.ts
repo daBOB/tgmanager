@@ -25,8 +25,12 @@ export interface TelegramConfig {
 export interface ImageProcessingConfig {
   maxDimension: number;
   maxCombinedDimensions: number;
-  /** Largest file Telegram accepts as a photo; above this, send as a document. */
+  /** Largest file Telegram accepts as a photo; above this the image is shrunk. */
   maxPhotoBytes: number;
+  /** Longest side to downscale to when shrinking an image to fit the photo limit. */
+  photoMaxDimension: number;
+  /** JPEG quality used when re-encoding an image to fit the photo limit. */
+  photoJpegQuality: number;
   supportedFormats: string[];
 }
 

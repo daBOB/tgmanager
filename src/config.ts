@@ -104,9 +104,17 @@ const config: Config = {
       maxCombinedDimensions: 9000,
       // Telegram's ceiling for a file sent as a *photo*. Anything larger is
       // rejected with PHOTO_SAVE_FILE_INVALID however small its dimensions, so
-      // it has to go as a document instead. Independent of the dimension
-      // limits above: a 2160x2880 PNG can sit well inside them at 14MB.
+      // it has to be shrunk first. Independent of the dimension limits above:
+      // a 2160x2880 PNG can sit well inside them at 14MB.
       maxPhotoBytes: 10 * 1024 * 1024,
+      // Longest side to downscale to when an image is too large to send as a
+      // photo. Official clients downscale to roughly this before sending, which
+      // is why they never hit the size limit.
+      photoMaxDimension: 2560,
+      // Photos are re-encoded to JPEG when shrinking: re-encoding a PNG
+      // losslessly does not reliably reduce its size, and Telegram converts
+      // photos to JPEG on its side regardless.
+      photoJpegQuality: 85,
       supportedFormats: ['.jpg', '.jpeg', '.png', '.gif'],
     },
     video: {
