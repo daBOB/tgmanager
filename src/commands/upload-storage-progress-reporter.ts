@@ -25,3 +25,11 @@ export function createDirectUploadProgressBar(): cliProgress.SingleBar {
     cliProgress.Presets.shades_classic
   );
 }
+
+/** Progress bar for the pre-queue duplicate check, which reads every file. */
+export function createHashProgressBar(): cliProgress.SingleBar {
+  return new cliProgress.SingleBar(
+    { format: 'Checking for duplicates |{bar}| {percentage}% | {value}/{total} | {file}', fps: 5 },
+    cliProgress.Presets.shades_classic
+  );
+}

@@ -101,6 +101,7 @@ async function selectNewFiles(
 
   const { knownContentHashes } = await import('../queue/queue-manager.js');
   const { hashFile } = await import('../storage/checksum-utils.js');
+  const { createHashProgressBar } = await import('../commands/upload-storage-progress-reporter.js');
   // One query for the whole chat: a directory enqueue checks thousands of files.
   // Includes work already queued, so resuming tops the queue up rather than doubling it.
   const alreadyUploaded = knownContentHashes(account, options.chatId);
@@ -108,7 +109,13 @@ async function selectNewFiles(
   const candidates: { filePath: string; contentHash: string | null }[] = [];
   let skipped = 0;
 
-  for (const filePath of files) {
+  // Hashing reads every byte of every candidate before a single job is queued.
+  // Over a large library that is minutes of silence, which reads as a hang.
+  const bar = createHashProgressBar();
+  bar.start(files.length, 0, { file: '' });
+
+  for (const [index, filePath] of files.entries()) {
+    bar.update(index, { file: basename(filePath).slice(0, 28) });
     try {
       const { hash } = await hashFile(filePath);
       if (alreadyUploaded.has(hash)) {
@@ -127,6 +134,9 @@ async function selectNewFiles(
       candidates.push({ filePath, contentHash: null });
     }
   }
+
+  bar.update(files.length);
+  bar.stop();
 
   return { candidates, skipped };
 }
