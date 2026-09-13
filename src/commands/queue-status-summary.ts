@@ -62,7 +62,12 @@ export function buildSummaryLines(
     : grandTotal;
   const hiddenRows = scopeTotal - shownCount;
 
-  const label = selected ? `${selected.join('/')} job` : 'job';
+  // The outstanding view selects both live states; "queued" reads better than
+  // spelling the pair out.
+  const isOutstandingView = selected !== null
+    && selected.length === OUTSTANDING.length
+    && OUTSTANDING.every(status => selected.includes(status));
+  const label = !selected ? 'job' : isOutstandingView ? 'queued job' : `${selected.join('/')} job`;
   const plural = scopeTotal === 1 ? '' : 's';
   const prefix = hiddenRows > 0 ? `showing ${shownCount} of ` : '';
   const breakdown = describe(counts, REPORT_ORDER);

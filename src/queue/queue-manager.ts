@@ -31,6 +31,15 @@ const INSERT_SQL = `
  */
 const CLAIM_ORDER = 'ORDER BY priority DESC, created_at ASC, rowid ASC';
 
+/**
+ * Display ordering for outstanding work: whatever is running now, then the jobs
+ * that will follow it. The claim order alone does not do this — a claimed job
+ * keeps its original position, so the file actually uploading can sort below
+ * ones that have not started.
+ */
+const DISPLAY_ORDER = `ORDER BY CASE status WHEN 'processing' THEN 0 ELSE 1 END,
+                       priority DESC, created_at ASC, rowid ASC`;
+
 /** Only jobs whose scheduled time has arrived are eligible. */
 const ELIGIBLE = `status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= ?)`;
 
@@ -190,7 +199,11 @@ export function listJobs(account: string, filter: QueueListFilter = {}): QueueJo
 
   // Outstanding work is most useful in the order it will actually run; history
   // is most useful newest-first.
-  const ordering = filter.order === 'queue' ? CLAIM_ORDER : 'ORDER BY created_at DESC';
+  // rowid breaks ties in both orderings: created_at resolves to milliseconds,
+  // and a batch enqueue lands thousands of rows inside one.
+  const ordering = filter.order === 'queue'
+    ? DISPLAY_ORDER
+    : 'ORDER BY created_at DESC, rowid DESC';
   let sql = `SELECT * FROM jobs WHERE ${clauses.join(' AND ')} ${ordering}`;
   if (filter.limit !== undefined) {
     sql += ' LIMIT ?';

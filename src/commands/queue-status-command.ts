@@ -14,6 +14,14 @@ import { buildSummaryLines, outstandingCount, OUTSTANDING } from './queue-status
 export const DEFAULT_STATUS_LIMIT = 50;
 
 /**
+ * Pending jobs shown alongside whatever is uploading.
+ *
+ * The useful answer to "what is it doing?" is the current file and the few
+ * behind it — not fifty rows that push the summary off the screen.
+ */
+export const NEXT_UP_COUNT = 5;
+
+/**
  * Pick what to list when the caller named no status.
  *
  * With work outstanding the useful view is that work, in the order it will run.
@@ -40,7 +48,11 @@ const FILE_COLUMN_WIDTH = 34;
 export function queueStatusCommand(account: string, filter: QueueListFilter = {}): boolean {
   const counts = countJobsByStatus(account);
   const effective = withDefaultView(filter, counts);
-  const limit = effective.limit ?? DEFAULT_STATUS_LIMIT;
+  // An outstanding view is deliberately short; history keeps the larger cap.
+  const defaultLimit = effective.order === 'queue'
+    ? (counts.processing ?? 0) + NEXT_UP_COUNT
+    : DEFAULT_STATUS_LIMIT;
+  const limit = effective.limit ?? defaultLimit;
   const jobs = listJobs(account, { ...effective, limit });
   const { headline, summary, hint } = buildSummaryLines(jobs.length, counts, effective);
 
