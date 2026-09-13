@@ -17,11 +17,19 @@ interface UpdateEmitter {
 
 export class Uploader {
   private client: TelegramClient;
+  /**
+   * Reports upload progress to whoever constructed this uploader.
+   *
+   * The progress bar only reaches the terminal of the process doing the work;
+   * a queue worker uses this to persist progress so other processes can see it.
+   */
+  private onProgress?: (percent: number) => void;
   /** Cached premium status to avoid repeated API calls */
   private cachedPremiumStatus: boolean | null = null;
 
-  constructor(client: TelegramClient) {
+  constructor(client: TelegramClient, onProgress?: (percent: number) => void) {
     this.client = client;
+    this.onProgress = onProgress;
     // gramjs is an EventEmitter at runtime but does not declare `on` in its
     // public types, which only expose addEventHandler. Cast to the narrow
     // surface actually used rather than letting `any` leak into the callback.
@@ -95,7 +103,11 @@ export class Uploader {
         await this.client.sendFile(chatId, {
           file: filePath,
           caption: fileName,
-          progressCallback: (e: number) => progressBar.update(Math.floor(e * 100)),
+          progressCallback: (e: number) => {
+            const percent = Math.floor(e * 100);
+            progressBar.update(percent);
+            this.onProgress?.(percent);
+          },
           ...extraOptions,
         });
       }, progressBar);

@@ -22,6 +22,7 @@ export interface JobRow {
   completed_at: string | null;
   error: string | null;
   worker_pid: number | null;
+  progress: number | null;
 }
 
 /** Convert a row into the domain object. */
@@ -45,6 +46,7 @@ export function rowToJob(row: JobRow): QueueJob {
     completedAt: row.completed_at,
     error: row.error,
     workerPid: row.worker_pid,
+    progress: row.progress,
   };
 }
 
@@ -68,6 +70,7 @@ export function jobToInsertParams(account: string, job: QueueJob): unknown[] {
     job.completedAt,
     job.error,
     job.workerPid,
+    job.progress,
   ];
 }
 

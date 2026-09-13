@@ -69,6 +69,9 @@ export interface QueueJob {
   /** Process ID of worker handling this job (null if not processing) */
   workerPid: number | null;
 
+  /** Percent complete while uploading; null when not started or finished. */
+  progress: number | null;
+
   /** Higher runs first; jobs of equal priority run oldest-first. Default 0. */
   priority: number;
 

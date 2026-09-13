@@ -16,6 +16,7 @@ import {
 } from './queue-manager.js';
 import logger from '../logger.js';
 import { print } from '../utils/console-output.js';
+import { createProgressWriter } from './queue-progress-writer.js';
 
 /**
  * Run one queued job against whichever destination it names.
@@ -80,8 +81,10 @@ export async function startWorker(
   // the history is walked once rather than once per job. Jobs that name a
   // different storage channel fall back to their own service.
   // One Uploader for the whole drain: it caches the account's premium status,
-  // which would otherwise cost an API round-trip per file.
-  const uploader = new Uploader(client);
+  // which would otherwise cost an API round-trip per file. Its progress is
+  // written to the queue so a separate queue-status process can report it.
+  const progress = createProgressWriter(account);
+  const uploader = new Uploader(client, percent => progress.report(percent));
 
   const sharedStorage = new Map<string, StorageService>();
   const storageFor = async (storageChannelId?: string): Promise<StorageService> => {
@@ -102,6 +105,8 @@ export async function startWorker(
 
     const job = claimJob(account, nextJob.id);
     if (!job) continue; // Race condition: another process claimed it
+
+    progress.startJob(job.id);
 
     const pending = countJobsByStatus(account).pending ?? 0;
     print(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);

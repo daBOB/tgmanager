@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   started_at         TEXT,
   completed_at       TEXT,
   error              TEXT,
-  worker_pid         INTEGER
+  worker_pid         INTEGER,
+  -- Percent complete of the job currently uploading. Written by the worker so
+  -- a separate queue-status process can report progress it cannot otherwise see.
+  progress           INTEGER
 );
 `;
 
@@ -119,6 +122,9 @@ function migrate(db: DatabaseSync): void {
   }
   if (!columns.has('content_hash')) {
     db.exec('ALTER TABLE jobs ADD COLUMN content_hash TEXT');
+  }
+  if (!columns.has('progress')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN progress INTEGER');
   }
 }
 

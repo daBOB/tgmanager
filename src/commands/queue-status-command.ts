@@ -85,7 +85,11 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
     const id = job.id.substring(0, 8).padEnd(10);
     const fileName = truncateFileName(basename(job.filePath), FILE_COLUMN_WIDTH - 2)
       .padEnd(FILE_COLUMN_WIDTH);
-    const status = job.status.padEnd(12);
+    // A running job shows how far it has got instead of repeating "processing",
+    // which the row's position already conveys.
+    const status = (job.status === 'processing' && job.progress !== null
+      ? `${job.progress}%`
+      : job.status).padEnd(12);
     const created = formatRelativeTime(job.createdAt);
 
     print(`${num}${id}${fileName}${status}${created}`);

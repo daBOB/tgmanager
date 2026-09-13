@@ -18,8 +18,8 @@ const INSERT_SQL = `
   INSERT INTO jobs (id, account, kind, file_path, virtual_path, chat_id,
                     storage_channel_id, content_hash, delete_source, status,
                     priority, scheduled_at, created_at, started_at,
-                    completed_at, error, worker_pid)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+                    completed_at, error, worker_pid, progress)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 /**
  * Ordering shared by claiming and by queue position, so the two agree.
@@ -58,6 +58,7 @@ function buildJob(options: QueueAddOptions): QueueJob {
     priority: options.priority ?? 0,
     scheduledAt: options.scheduledAt ?? null,
     createdAt: new Date().toISOString(),
+    progress: null,
     startedAt: null,
     completedAt: null,
     error: null,
@@ -115,7 +116,8 @@ export function claimJob(account: string, jobId: string): QueueJob | null {
   const db = getDb();
 
   const changed = asCount(db
-    .prepare(`UPDATE jobs SET status = 'processing', started_at = ?, worker_pid = ?
+    .prepare(`UPDATE jobs SET status = 'processing', started_at = ?, worker_pid = ?,
+                              progress = 0
               WHERE id = ? AND account = ? AND status = 'pending'`)
     .run(new Date().toISOString(), process.pid, jobId, account).changes);
 
@@ -131,7 +133,8 @@ export function claimJob(account: string, jobId: string): QueueJob | null {
 /** Move a job to a terminal state. */
 function finishJob(account: string, jobId: string, status: 'completed' | 'failed' | 'cancelled', error: string | null): boolean {
   const changed = asCount(getDb()
-    .prepare(`UPDATE jobs SET status = ?, completed_at = ?, error = ?, worker_pid = NULL
+    .prepare(`UPDATE jobs SET status = ?, completed_at = ?, error = ?, worker_pid = NULL,
+                              progress = NULL
               WHERE id = ? AND account = ?`)
     .run(status, new Date().toISOString(), error, jobId, account).changes);
 
@@ -332,7 +335,21 @@ export function knownContentHashes(account: string, chatId: string): Set<string>
 
 /** Fields cleared when a job is sent back to the queue. */
 const RESET_TO_PENDING = `status = 'pending', error = NULL, started_at = NULL,
-                          completed_at = NULL, worker_pid = NULL`;
+                          completed_at = NULL, worker_pid = NULL, progress = NULL`;
+
+/**
+ * Record how far the current upload has got.
+ *
+ * Written by the worker purely so another process can read it — progress lives
+ * in the uploading process's memory otherwise, and `queue-status` runs
+ * separately. Callers throttle: the underlying callback fires far too often to
+ * put every tick on disk.
+ */
+export function updateJobProgress(account: string, jobId: string, percent: number): void {
+  getDb()
+    .prepare(`UPDATE jobs SET progress = ? WHERE id = ? AND account = ? AND status = 'processing'`)
+    .run(Math.max(0, Math.min(100, Math.round(percent))), jobId, account);
+}
 
 /**
  * Return every failed job to the queue.
