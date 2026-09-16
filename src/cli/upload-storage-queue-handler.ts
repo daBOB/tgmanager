@@ -1,21 +1,13 @@
-import { existsSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { posix, basename } from 'node:path';
 import logger from '../logger.js';
 import { walkDirectory } from '../utils/directory-walker.js';
 import { startClient } from './command-dispatcher.js';
 import { print, printError } from '../utils/console-output.js';
+import { reportMissingUploadPath, type QueueOutcome } from './queue-outcome.js';
 import type { CommandOptions } from '../types/index.js';
 import type { StoredFileInfo } from '../storage/storage-service.js';
 import type { QueueAddOptions } from '../queue/queue-types.js';
-
-/**
- * Outcome of the pre-lock queuing step.
- * `done` means there is nothing further to do and the CLI should exit with the
- * given code — either everything was already in storage, or the input was bad.
- */
-export type QueueOutcome =
-  | { kind: 'queued'; jobIds: string[] }
-  | { kind: 'done'; exitCode: number };
 
 /**
  * Fetch existing files from storage for duplicate detection.
@@ -109,11 +101,7 @@ export async function handleUploadStorageQueue(
   uploadPath: string,
   options: CommandOptions
 ): Promise<QueueOutcome> {
-  if (!existsSync(uploadPath)) {
-    logger.error(`File not found: ${uploadPath}`);
-    printError(`❌ File not found: ${uploadPath}`);
-    return { kind: 'done', exitCode: 1 };
-  }
+  if (reportMissingUploadPath(uploadPath)) return { kind: 'done', exitCode: 1 };
 
   const existingFiles = options.force ? [] : await fetchExistingFiles(account, options.storageChannel);
   const { addJob, getQueuePosition } = await import('../queue/queue-manager.js');

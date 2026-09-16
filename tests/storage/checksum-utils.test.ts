@@ -1,9 +1,8 @@
 // tests/storage/checksum-utils.test.ts
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { writeFile, unlink, mkdir, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { describe, it, expect } from 'vitest';
+import { writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { makeTempDir } from '../helpers/test-fixtures.js';
+import { useTempDir } from '../helpers/test-fixtures.js';
 import {
   hashFile,
   hashChunk,
@@ -11,21 +10,9 @@ import {
   verifyFile
 } from '../../src/storage/checksum-utils.js';
 
-const TEST_DIR = makeTempDir('checksum');
+const TEST_DIR = useTempDir('checksum');
 
 describe('checksum-utils', () => {
-  beforeAll(async () => {
-    if (!existsSync(TEST_DIR)) {
-      await mkdir(TEST_DIR, { recursive: true });
-    }
-  });
-
-  afterAll(async () => {
-    if (existsSync(TEST_DIR)) {
-      await rm(TEST_DIR, { recursive: true });
-    }
-  });
-
   describe('hashChunk', () => {
     it('should hash a buffer correctly', () => {
       const data = Buffer.from('hello world');

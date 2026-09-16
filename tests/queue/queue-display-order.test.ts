@@ -1,20 +1,9 @@
 // What a worker is doing now, and what follows it.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync } from 'node:fs';
-import { makeTempDir, useRegisteredAccounts } from '../helpers/test-fixtures.js';
+import { describe, it, expect } from 'vitest';
+import { useRegisteredAccounts, useTempQueueHome } from '../helpers/test-fixtures.js';
 
 useRegisteredAccounts('a');
-
-let tempHome: string;
-const realHome = process.env.HOME;
-
-beforeEach(() => { tempHome = makeTempDir('display'); process.env.HOME = tempHome; });
-afterEach(async () => {
-  const { closeDb, getQueueDbPath } = await import('../../src/queue/queue-database.js');
-  closeDb(getQueueDbPath());
-  process.env.HOME = realHome;
-  rmSync(tempHome, { recursive: true, force: true });
-});
+useTempQueueHome('display');
 
 const ACCOUNT = 'a';
 const queue = () => import('../../src/queue/queue-manager.js');

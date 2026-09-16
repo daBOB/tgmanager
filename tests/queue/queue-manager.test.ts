@@ -3,30 +3,13 @@
 // The lockfile suite that used to live here is gone with the lockfile: claiming
 // is now a guarded UPDATE, so exclusivity is a property of the statement rather
 // than of a file created with O_EXCL.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync, mkdirSync } from 'node:fs';
+import { describe, it, expect } from 'vitest';
+import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { makeTempDir, useRegisteredAccounts } from '../helpers/test-fixtures.js';
+import { useRegisteredAccounts, useTempQueueHome } from '../helpers/test-fixtures.js';
 
 useRegisteredAccounts('testaccount', 'other');
-
-// The database lives under $HOME/.tgmanager, so each test gets its own HOME and
-// therefore its own database.
-let tempHome: string;
-const realHome = process.env.HOME;
-
-beforeEach(() => {
-  tempHome = makeTempDir('queue');
-  process.env.HOME = tempHome;
-});
-
-afterEach(async () => {
-  const { closeDb } = await import('../../src/queue/queue-database.js');
-  const { getQueueDbPath } = await import('../../src/queue/queue-manager.js');
-  closeDb(getQueueDbPath());
-  process.env.HOME = realHome;
-  rmSync(tempHome, { recursive: true, force: true });
-});
+useTempQueueHome('queue');
 
 /** Imported lazily so each test resolves the database under the current HOME. */
 async function queue() {

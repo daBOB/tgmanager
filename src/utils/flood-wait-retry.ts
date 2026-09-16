@@ -62,7 +62,7 @@ function asFloodWait(error: unknown): { seconds: number } | null {
  * request is worth repeating. A 4xx means it rejected the request itself and
  * would reject it again identically.
  *
- * The magnitude is what matters, not the sign: gramjs reports its own transport
+ * The magnitude is what matters, not the sign: teleproto reports its own transport
  * failures with negative codes, and -503 (a request timeout, typically
  * mid-transfer on upload.SaveBigFilePart) is every bit as retryable as a server
  * 503. Negative 4xx codes stay non-retryable for the same reason positive ones do.

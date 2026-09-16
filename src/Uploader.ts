@@ -32,7 +32,7 @@ export class Uploader {
   constructor(client: TelegramClient, onProgress?: (percent: number) => void) {
     this.client = client;
     this.onProgress = onProgress;
-    // gramjs is an EventEmitter at runtime but does not declare `on` in its
+    // teleproto is an EventEmitter at runtime but does not declare `on` in its
     // public types, which only expose addEventHandler. Cast to the narrow
     // surface actually used rather than letting `any` leak into the callback.
     (this.client as unknown as UpdateEmitter).on('update', (update) => {

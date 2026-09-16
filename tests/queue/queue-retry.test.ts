@@ -4,13 +4,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeTempDir, useRegisteredAccounts } from '../helpers/test-fixtures.js';
+import { makeTempDir, useRegisteredAccounts, useTempQueueHome } from '../helpers/test-fixtures.js';
 
 useRegisteredAccounts('testaccount', 'other');
+useTempQueueHome('retry');
 
-let tempHome: string;
+// Source files live outside $HOME: each test gets a fresh directory, since one
+// test's leftovers would change what the next one finds on disk.
 let workDir: string;
-const realHome = process.env.HOME;
 
 /** A real file on disk, since retry now refuses jobs whose source is gone. */
 function realFile(name: string): string {
@@ -19,19 +20,8 @@ function realFile(name: string): string {
   return path;
 }
 
-beforeEach(() => {
-  tempHome = makeTempDir('retry');
-  workDir = makeTempDir('retry-files');
-  process.env.HOME = tempHome;
-});
-
-afterEach(async () => {
-  const { closeDb, getQueueDbPath } = await import('../../src/queue/queue-database.js');
-  closeDb(getQueueDbPath());
-  process.env.HOME = realHome;
-  rmSync(tempHome, { recursive: true, force: true });
-  rmSync(workDir, { recursive: true, force: true });
-});
+beforeEach(() => { workDir = makeTempDir('retry-files'); });
+afterEach(() => rmSync(workDir, { recursive: true, force: true }));
 
 const ACCOUNT = 'testaccount';
 const queue = () => import('../../src/queue/queue-manager.js');

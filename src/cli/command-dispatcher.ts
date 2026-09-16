@@ -9,7 +9,7 @@ import logger from '../logger.js';
 import { validateChatId, validateAccountName, validateCommand } from '../utils/validation.js';
 import { createSession } from '../session-helper.js';
 import { createProcessLock } from '../utils/process-lock.js';
-import { AuthKeyDuplicatedError, handleError, isAuthKeyDuplicatedError } from '../utils/errors.js';
+import { AuthKeyDuplicatedError, isAuthKeyDuplicatedError, reportAuthKeyDuplicated } from '../utils/errors.js';
 import { handleUploadStorageQueue } from './upload-storage-queue-handler.js';
 import { routeCommand } from './command-router.js';
 import { print, printError } from '../utils/console-output.js';
@@ -37,7 +37,7 @@ export const startClient = async (account_name: string): Promise<TelegramClient>
     // what this client has always negotiated in practice. gramjs took a useWSS
     // boolean here, but it only ever applied to browser builds and every
     // connection from Node was TCPFull regardless.
-    // gramjs otherwise swallows any flood wait at or below 60s: it sleeps
+    // teleproto otherwise swallows any flood wait at or below 60s: it sleeps
     // inside the request loop and never raises error 420, so our retry
     // handling — including pausing the progress bar — only ran for waits
     // longer than a minute. At 0 every flood wait surfaces and is handled
@@ -46,8 +46,8 @@ export const startClient = async (account_name: string): Promise<TelegramClient>
     baseLogger: createTeleprotoLogger(config.app.logLevel)
   });
 
-  // gramjs types `on` without the (event, handler) overload even though the
-  // client emits these, so narrow to the EventEmitter surface it really has.
+  // teleproto types `on` without the (event, handler) overload even though
+  // the client emits these, so narrow to the EventEmitter surface it has.
   const clientEvents = client as unknown as EventEmitter;
 
   clientEvents.on('disconnect', (err?: Error) => {
@@ -61,8 +61,7 @@ export const startClient = async (account_name: string): Promise<TelegramClient>
 
   clientEvents.on('error', (err: Error) => {
     if (isAuthKeyDuplicatedError(err)) {
-      logger.error('AUTH_KEY_DUPLICATED detected', { error: err.message });
-      printError('\n❌ ' + handleError(new AuthKeyDuplicatedError()) + '\n');
+      reportAuthKeyDuplicated(err);
       process.exit(1);
     }
     logger.error('Client error', { error: err.message });
@@ -245,8 +244,7 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
     return await routeCommand({ client, account, options, uploadPath });
   } catch (error) {
     if (isAuthKeyDuplicatedError(error)) {
-      const authError = error instanceof AuthKeyDuplicatedError ? error : new AuthKeyDuplicatedError();
-      printError('\n❌ ' + handleError(authError) + '\n');
+      reportAuthKeyDuplicated(error);
       return 1;
     }
     logger.error('Fatal error', {
@@ -255,10 +253,10 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
     });
     return 1;
   } finally {
-    // gramjs keeps sockets and ping timers open; without this the process would
-    // never exit now that handlers return instead of calling process.exit.
+    // teleproto keeps sockets and ping timers open; without this the process
+    // would never exit now that handlers return instead of calling process.exit.
     if (client) {
-      // From here gramjs's update loop is expected to reject with TIMEOUT as
+      // From here teleproto's update loop is expected to reject with TIMEOUT as
       // its socket closes; that one rejection is filtered out.
       beginTelegramShutdown();
       try {

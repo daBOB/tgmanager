@@ -1,6 +1,6 @@
 // tests/storage/file-splitter.test.ts
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { writeFile, mkdir, rm } from 'node:fs/promises';
+import { describe, it, expect } from 'vitest';
+import { writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
@@ -11,24 +11,12 @@ import {
   getChunkFilename
 } from '../../src/storage/file-splitter.js';
 import { hashFile } from '../../src/storage/checksum-utils.js';
-import { makeTempDir } from '../helpers/test-fixtures.js';
+import { useTempDir } from '../helpers/test-fixtures.js';
 
-const TEST_DIR = makeTempDir('splitter');
+const TEST_DIR = useTempDir('splitter');
 const CHUNK_SIZE = 1024 * 10; // 10KB for testing
 
 describe('file-splitter', () => {
-  beforeAll(async () => {
-    if (!existsSync(TEST_DIR)) {
-      await mkdir(TEST_DIR, { recursive: true });
-    }
-  });
-
-  afterAll(async () => {
-    if (existsSync(TEST_DIR)) {
-      await rm(TEST_DIR, { recursive: true });
-    }
-  });
-
   describe('getChunkFilename', () => {
     it('should generate padded chunk names', () => {
       expect(getChunkFilename('abc123', 0)).toBe('abc123-chunk-000');

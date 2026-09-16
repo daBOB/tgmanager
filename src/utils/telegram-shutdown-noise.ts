@@ -1,4 +1,4 @@
-// Silences the one rejection gramjs always produces while shutting down.
+// Silences the one rejection teleproto always produces while shutting down.
 //
 // Its update loop races the connection against a timer. Closing the socket
 // makes that race reject with "TIMEOUT", and nothing is awaiting it by then, so
@@ -13,7 +13,7 @@ import logger from '../logger.js';
 
 let shuttingDown = false;
 
-/** Message gramjs's update-loop race rejects with. */
+/** Message teleproto's update-loop race rejects with. */
 const SHUTDOWN_TIMEOUT_MESSAGE = 'TIMEOUT';
 
 /** Mark teardown as begun, from which point the timeout rejection is expected. */
@@ -21,7 +21,7 @@ export function beginTelegramShutdown(): void {
   shuttingDown = true;
 }
 
-/** True when `reason` is the rejection gramjs emits as its connection closes. */
+/** True when `reason` is the rejection teleproto emits as its connection closes. */
 export function isExpectedShutdownRejection(reason: unknown): boolean {
   if (!shuttingDown) return false;
   return reason instanceof Error && reason.message === SHUTDOWN_TIMEOUT_MESSAGE;
@@ -37,7 +37,7 @@ export function isExpectedShutdownRejection(reason: unknown): boolean {
 export function installShutdownNoiseFilter(): void {
   process.on('unhandledRejection', (reason: unknown) => {
     if (isExpectedShutdownRejection(reason)) {
-      logger.debug('Ignored expected gramjs shutdown timeout');
+      logger.debug('Ignored expected teleproto shutdown timeout');
       return;
     }
 

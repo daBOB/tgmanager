@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MockTelegramClient } from '../mocks/telegram-client-mock.js';
 import { StorageService } from '../../src/storage/storage-service.js';
-import type { FileManifest } from '../../src/storage/manifest-manager.js';
+import { makeManifest } from '../helpers/test-fixtures.js';
 
 describe('StorageService', () => {
   let client: MockTelegramClient;
@@ -35,20 +35,13 @@ describe('StorageService', () => {
     it('should upload manifest as JSON message', async () => {
       await storage.initializeStorageChannel();
 
-      const manifest: FileManifest = {
+      const manifest = makeManifest({
         fileId: 'test-file-id',
-        version: 1,
         originalName: 'test.bin',
         originalPath: '/test/test.bin',
-        originalSize: 1024,
         originalHash: 'abc123',
         chunkSize: 512,
-        totalChunks: 2,
-        chunks: [],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+      });
 
       const messageId = await storage.uploadManifest(manifest);
 
@@ -60,20 +53,13 @@ describe('StorageService', () => {
     it('should retrieve and parse manifest', async () => {
       await storage.initializeStorageChannel();
 
-      const manifest: FileManifest = {
+      const manifest = makeManifest({
         fileId: 'retrieve-test',
-        version: 1,
         originalName: 'retrieve.bin',
         originalPath: '/retrieve.bin',
         originalSize: 2048,
         originalHash: 'def456',
-        chunkSize: 1024,
-        totalChunks: 2,
-        chunks: [],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+      });
 
       const messageId = await storage.uploadManifest(manifest);
       const retrieved = await storage.getManifestFromMessage(messageId);
@@ -89,35 +75,8 @@ describe('StorageService', () => {
       await storage.initializeStorageChannel();
 
       // Upload multiple manifests
-      const manifest1: FileManifest = {
-        fileId: 'file1',
-        version: 1,
-        originalName: 'file1.bin',
-        originalPath: '/docs/file1.bin',
-        originalSize: 1024,
-        originalHash: 'h1',
-        chunkSize: 1024,
-        totalChunks: 1,
-        chunks: [],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      const manifest2: FileManifest = {
-        fileId: 'file2',
-        version: 1,
-        originalName: 'file2.bin',
-        originalPath: '/docs/file2.bin',
-        originalSize: 2048,
-        originalHash: 'h2',
-        chunkSize: 1024,
-        totalChunks: 2,
-        chunks: [],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+      const manifest1 = makeManifest({ fileId: 'file1', originalPath: '/docs/file1.bin' });
+      const manifest2 = makeManifest({ fileId: 'file2', originalPath: '/docs/file2.bin', originalSize: 2048 });
 
       await storage.uploadManifest(manifest1);
       await storage.uploadManifest(manifest2);
@@ -132,20 +91,12 @@ describe('StorageService', () => {
     it('should delete manifest and chunks', async () => {
       await storage.initializeStorageChannel();
 
-      const manifest: FileManifest = {
+      const manifest = makeManifest({
         fileId: 'delete-test',
-        version: 1,
         originalName: 'delete.bin',
         originalPath: '/delete.bin',
-        originalSize: 1024,
-        originalHash: 'hash',
-        chunkSize: 1024,
-        totalChunks: 1,
         chunks: [{ index: 0, filename: 'chunk-000', size: 1024, hash: 'h', messageId: 100 }],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+      });
 
       const messageId = await storage.uploadManifest(manifest);
       const deleted = await storage.deleteStoredFile(messageId);
@@ -158,20 +109,11 @@ describe('StorageService', () => {
     it('should find file by exact virtual path', async () => {
       await storage.initializeStorageChannel();
 
-      const manifest: FileManifest = {
+      const manifest = makeManifest({
         fileId: 'find-test',
-        version: 1,
         originalName: 'findme.bin',
         originalPath: '/specific/path',
-        originalSize: 1024,
-        originalHash: 'hash',
-        chunkSize: 1024,
-        totalChunks: 1,
-        chunks: [],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+      });
 
       await storage.uploadManifest(manifest);
       const found = await storage.findByPath('/specific/path/findme.bin');
@@ -193,35 +135,8 @@ describe('StorageService', () => {
     it('should filter files by path prefix', async () => {
       await storage.initializeStorageChannel();
 
-      const manifest1: FileManifest = {
-        fileId: 'docs1',
-        version: 1,
-        originalName: 'doc1.bin',
-        originalPath: '/documents/doc1.bin',
-        originalSize: 1024,
-        originalHash: 'h1',
-        chunkSize: 1024,
-        totalChunks: 1,
-        chunks: [],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      const manifest2: FileManifest = {
-        fileId: 'img1',
-        version: 1,
-        originalName: 'img1.bin',
-        originalPath: '/images/img1.bin',
-        originalSize: 2048,
-        originalHash: 'h2',
-        chunkSize: 1024,
-        totalChunks: 2,
-        chunks: [],
-        status: 'complete',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+      const manifest1 = makeManifest({ fileId: 'docs1', originalPath: '/documents/doc1.bin' });
+      const manifest2 = makeManifest({ fileId: 'img1', originalPath: '/images/img1.bin', originalSize: 2048 });
 
       await storage.uploadManifest(manifest1);
       await storage.uploadManifest(manifest2);

@@ -1,9 +1,7 @@
 // tests/storage/manifest-manager.test.ts
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdir, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { makeTempDir } from '../helpers/test-fixtures.js';
+import { useTempDir } from '../helpers/test-fixtures.js';
 import {
   createManifest,
   addChunkToManifest,
@@ -16,21 +14,9 @@ import {
   DEFAULT_CHUNK_SIZE
 } from '../../src/storage/manifest-manager.js';
 
-const TEST_DIR = makeTempDir('manifests');
+const TEST_DIR = useTempDir('manifests');
 
 describe('manifest-manager', () => {
-  beforeAll(async () => {
-    if (!existsSync(TEST_DIR)) {
-      await mkdir(TEST_DIR, { recursive: true });
-    }
-  });
-
-  afterAll(async () => {
-    if (existsSync(TEST_DIR)) {
-      await rm(TEST_DIR, { recursive: true });
-    }
-  });
-
   describe('createManifest', () => {
     it('should create manifest with correct structure', () => {
       const manifest = createManifest(

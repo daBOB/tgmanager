@@ -6,13 +6,13 @@
 // from the start, and a failed file was recorded only in the log. As queue jobs
 // each file is durable: the next run resumes, and failures are listable long
 // after the fact.
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import logger from '../logger.js';
 import { print, printError } from '../utils/console-output.js';
 import type { CommandOptions } from '../types/index.js';
 import type { QueueAddOptions } from '../queue/queue-types.js';
-import type { QueueOutcome } from './upload-storage-queue-handler.js';
+import { reportMissingUploadPath, type QueueOutcome } from './queue-outcome.js';
 
 /**
  * List the files a directory upload covers.
@@ -39,11 +39,7 @@ export async function handleUploadChannelQueue(
   options: CommandOptions,
   addJobs: (account: string, jobs: QueueAddOptions[]) => { id: string }[]
 ): Promise<QueueOutcome> {
-  if (!existsSync(uploadPath)) {
-    logger.error(`File not found: ${uploadPath}`);
-    printError(`❌ File not found: ${uploadPath}`);
-    return { kind: 'done', exitCode: 1 };
-  }
+  if (reportMissingUploadPath(uploadPath)) return { kind: 'done', exitCode: 1 };
 
   const isDirectory = statSync(uploadPath).isDirectory();
   const files = isDirectory ? listDirectoryFiles(uploadPath) : [uploadPath];

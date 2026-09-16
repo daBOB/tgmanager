@@ -51,7 +51,7 @@ over filenames is a usable index.
   in instead.
 - **Type safety is a hard gate.** `src/` carries no `any` and no unsafe member
   access; the `no-unsafe-*` / `no-explicit-any` family is set to error, so the
-  backlog cannot re-accumulate. Where a library has no usable type (gramjs
+  backlog cannot re-accumulate. Where a library has no usable type (teleproto
   returns broad unions and omits its EventEmitter surface), the boundary gets a
   narrow local interface and a checked cast — never a blanket `any`. Tests keep
   the looser rules so doubles can fake loosely-typed API shapes.

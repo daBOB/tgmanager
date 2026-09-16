@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { useTempQueueHome } from '../helpers/test-fixtures.js';
 import {
   registerKnownAccounts,
   assertKnownAccount,
@@ -61,23 +62,7 @@ describe('assertKnownAccount', () => {
 // The guard is only worth anything at the point that writes rows, so exercise
 // it through the real enqueue path against a real (temporary) database.
 describe('addJobs enforcement', () => {
-  let tempHome: string;
-  const realHome = process.env.HOME;
-
-  beforeEach(async () => {
-    const { makeTempDir } = await import('../helpers/test-fixtures.js');
-    tempHome = makeTempDir('queue-guard');
-    process.env.HOME = tempHome;
-  });
-
-  afterEach(async () => {
-    const { closeDb } = await import('../../src/queue/queue-database.js');
-    const { getQueueDbPath } = await import('../../src/queue/queue-manager.js');
-    closeDb(getQueueDbPath());
-    process.env.HOME = realHome;
-    const { rmSync } = await import('node:fs');
-    rmSync(tempHome, { recursive: true, force: true });
-  });
+  useTempQueueHome('queue-guard');
 
   const options = { filePath: '/tmp/example.bin', virtualPath: 'Archive/example.bin' } as never;
 

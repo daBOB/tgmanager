@@ -5,27 +5,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeTempDir, useRegisteredAccounts } from '../helpers/test-fixtures.js';
+import { makeTempDir, useRegisteredAccounts, useTempQueueHome } from '../helpers/test-fixtures.js';
 
 useRegisteredAccounts('testaccount', 'dedup-other');
+useTempQueueHome('dedup-home');
 
-let tempHome: string;
+// The files being uploaded: per-test, since a test enqueues the whole directory
+// and would otherwise pick up what earlier tests wrote.
 let workDir: string;
-const realHome = process.env.HOME;
 
-beforeEach(() => {
-  tempHome = makeTempDir('dedup-home');
-  workDir = makeTempDir('dedup-work');
-  process.env.HOME = tempHome;
-});
-
-afterEach(async () => {
-  const { closeDb, getQueueDbPath } = await import('../../src/queue/queue-database.js');
-  closeDb(getQueueDbPath());
-  process.env.HOME = realHome;
-  rmSync(tempHome, { recursive: true, force: true });
-  rmSync(workDir, { recursive: true, force: true });
-});
+beforeEach(() => { workDir = makeTempDir('dedup-work'); });
+afterEach(() => rmSync(workDir, { recursive: true, force: true }));
 
 const ACCOUNT = 'testaccount';
 const CHAT = '-1001234567890';

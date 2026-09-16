@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { listJobs, retryFailedJobs, retryJob } from '../queue/queue-manager.js';
 import { isProcessAlive } from '../utils/process-liveness.js';
-import { resolveJobId } from './queue-job-id-resolver.js';
+import { resolveJobIdOrReport } from './queue-job-id-resolver.js';
 import { print, printError } from '../utils/console-output.js';
 
 /**
@@ -38,22 +38,8 @@ function retryAllFailed(account: string): boolean {
 }
 
 function retryOne(account: string, jobId: string): boolean {
-  const resolution = resolveJobId(listJobs(account), jobId);
-
-  if (resolution.kind === 'none') {
-    printError(`Error: No job found with ID starting with "${jobId}"`);
-    return false;
-  }
-
-  if (resolution.kind === 'ambiguous') {
-    printError(`Error: Ambiguous job ID "${jobId}". Multiple matches found:`);
-    for (const match of resolution.matches) {
-      printError(`  ${match.id.substring(0, 8)}  ${basename(match.filePath)}  (${match.status})`);
-    }
-    return false;
-  }
-
-  const { job } = resolution;
+  const job = resolveJobIdOrReport(listJobs(account), jobId);
+  if (!job) return false;
 
   if (job.status === 'pending') {
     print(`Job ${job.id.substring(0, 8)} is already queued.`);
