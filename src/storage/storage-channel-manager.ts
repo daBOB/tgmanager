@@ -1,5 +1,5 @@
 // Storage channel lifecycle: find or create a Telegram channel for storage.
-import { Api } from 'telegram';
+import { Api } from 'teleproto';
 import type { TelegramClient } from '../types/index.js';
 import logger from '../logger.js';
 import { DEFAULT_FLOOD_WAIT_MULTIPLIER } from '../utils/flood-wait-retry.js';

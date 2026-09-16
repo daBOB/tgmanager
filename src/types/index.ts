@@ -1,5 +1,5 @@
-import type { Api, TelegramClient } from 'telegram';
-import type { StoreSession } from 'telegram/sessions/index.js';
+import type { Api, TelegramClient } from 'teleproto';
+import type { StoreSession } from 'teleproto/sessions/index.js';
 
 export interface AccountConfig {
   apiId: number;
@@ -16,7 +16,6 @@ export interface AppConfig {
 
 export interface TelegramConfig {
   connectionRetries: number;
-  useWSS: boolean;
   floodWaitMultiplier: number;
 }
 

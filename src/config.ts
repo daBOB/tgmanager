@@ -85,7 +85,6 @@ const config: Config = {
   // Telegram client settings
   telegram: {
     connectionRetries: 50,
-    useWSS: true,
     floodWaitMultiplier: 1.5, // Multiplier for flood wait delays
   },
 

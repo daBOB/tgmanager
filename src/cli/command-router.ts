@@ -3,8 +3,8 @@
 // Every handler returns a process exit code rather than calling process.exit
 // itself, so the caller can still run its cleanup (process.exit skips `finally`
 // blocks) and so handlers stay testable.
-import { Api } from 'telegram';
-import type { TelegramClient } from 'telegram';
+import { Api } from 'teleproto';
+import type { TelegramClient } from 'teleproto';
 import logger from '../logger.js';
 import { removeEmptySourceDirectory } from './remove-empty-source-directory.js';
 import { sanitizeInput } from '../utils/validation.js';

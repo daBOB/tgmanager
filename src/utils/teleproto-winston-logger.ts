@@ -8,7 +8,7 @@
 // applies the level filter and then calls `log` to emit. Overriding `log` is
 // therefore the single interception point that catches all of them while
 // leaving gramjs's own level filtering intact.
-import { Logger, LogLevel } from 'telegram/extensions/Logger.js';
+import { Logger, LogLevel } from 'teleproto/extensions/Logger.js';
 import logger from '../logger.js';
 
 /** Levels gramjs understands. Anything else breaks its canSend() lookup. */
@@ -63,6 +63,6 @@ class WinstonBackedGramjsLogger extends Logger {
 }
 
 /** Build the logger to hand to TelegramClient as `baseLogger`. */
-export function createGramjsLogger(winstonLevel: string): Logger {
+export function createTeleprotoLogger(winstonLevel: string): Logger {
   return new WinstonBackedGramjsLogger(toGramjsLevel(winstonLevel));
 }

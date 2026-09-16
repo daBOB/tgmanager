@@ -1,5 +1,5 @@
 // Download chunks and manifests from a Telegram storage channel, with hash verification and deletion.
-import type { Api } from 'telegram';
+import type { Api } from 'teleproto';
 import { mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';

@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
-import { Api } from 'telegram';
+import { Api } from 'teleproto';
 import cliProgress from 'cli-progress';
 import logger, { logUpload } from './logger.js';
 import config from './config.js';

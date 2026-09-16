@@ -648,7 +648,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Language**: TypeScript 5.x with ES modules
 - **Runtime**: Bun 1.2+
 - **Type Safety**: Full TypeScript support with strict mode
-- **Telegram API**: [GramJS](https://github.com/gram-js/gramjs)
+- **Telegram API**: [teleproto](https://github.com/sanyok12345/teleproto) (maintained fork of GramJS)
 - **Image Processing**: [Sharp](https://sharp.pixelplumbing.com/)
 - **Video Processing**: [FFmpeg](https://ffmpeg.org/)
 - **Logging**: Winston with rotation
@@ -658,7 +658,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- Built with [GramJS](https://github.com/gram-js/gramjs)
+- Built with [teleproto](https://github.com/sanyok12345/teleproto), the maintained fork of [GramJS](https://github.com/gram-js/gramjs)
 - Image processing by [Sharp](https://sharp.pixelplumbing.com/)
 - Video processing with [FFmpeg](https://ffmpeg.org/)
 

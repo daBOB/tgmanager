@@ -8,7 +8,7 @@
     "dotenv": "^17.4.2",
     "p-limit": "^7.3.2",
     "sharp": "^0.35.4",
-    "telegram": "^2.26.22",
+    "teleproto": "^1.229.0",
     "winston": "^3.19.0"
   },
   "optionalDependencies": {
