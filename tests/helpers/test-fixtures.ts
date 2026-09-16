@@ -1,7 +1,9 @@
 // Shared fixtures for the test suites.
+import { beforeEach, afterEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { registerKnownAccounts, resetKnownAccounts } from '../../src/queue/queue-account-registry.js';
 import { createManifest } from '../../src/storage/manifest-manager.js';
 import type { FileManifest } from '../../src/storage/manifest-manager.js';
 
@@ -25,4 +27,17 @@ export function makeManifest(overrides: Partial<FileManifest> & { fileId: string
     overrides.chunkSize ?? 1024
   );
   return { ...base, status: 'complete', ...overrides };
+}
+
+/**
+ * Declare the accounts a suite enqueues under, the way the CLI does at startup.
+ *
+ * The queue refuses to write for an account nobody registered, so every suite
+ * that enqueues needs this. Registering keeps that guard live during tests
+ * instead of disabling it for them, and resetting afterwards stops one suite
+ * from authorising the next.
+ */
+export function useRegisteredAccounts(...accounts: string[]): void {
+  beforeEach(() => registerKnownAccounts(accounts));
+  afterEach(() => resetKnownAccounts());
 }

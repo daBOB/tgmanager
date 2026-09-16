@@ -20,8 +20,15 @@ type LivenessCheck = (pid: number) => boolean;
  *
  * A processing row with no recorded pid counts as stalled too: nothing can be
  * shown to be working on it, so calling it live would be the same lie.
+ *
+ * This is the single place the rule lives. Callers resolve it once per job and
+ * pass the answer on, so the count in the warning and the text in each row can
+ * never disagree — and one liveness syscall per job is all it costs.
+ *
+ * @param job - the job being inspected
+ * @param isAlive - liveness test; defaults to a real process check
  */
-function isStalled(job: QueueJob, isAlive: LivenessCheck): boolean {
+export function isJobStalled(job: QueueJob, isAlive: LivenessCheck = isProcessAlive): boolean {
   if (job.status !== 'processing') return false;
 
   return job.workerPid === null || !isAlive(job.workerPid);
@@ -35,26 +42,16 @@ function isStalled(job: QueueJob, isAlive: LivenessCheck): boolean {
  * a hint of how much a retry would repeat.
  *
  * @param job - the job being rendered
- * @param isAlive - liveness test; defaults to a real process check
+ * @param stalled - whether its worker is gone, from `isJobStalled`
  */
-export function describeJobStatus(job: QueueJob, isAlive: LivenessCheck = isProcessAlive): string {
+export function describeJobStatus(job: QueueJob, stalled: boolean): string {
   if (job.status !== 'processing') return job.status;
 
-  if (isStalled(job, isAlive)) {
+  if (stalled) {
     return job.progress !== null ? `stalled ${job.progress}%` : 'stalled';
   }
 
   return job.progress !== null ? `${job.progress}%` : 'processing';
-}
-
-/**
- * How many listed jobs are claimed by workers that are gone.
- *
- * Drives the notice telling the operator that the queue has stopped and what
- * recovers it — the thing a frozen progress figure hides.
- */
-export function countStalledJobs(jobs: QueueJob[], isAlive: LivenessCheck = isProcessAlive): number {
-  return jobs.filter(job => isStalled(job, isAlive)).length;
 }
 
 /**

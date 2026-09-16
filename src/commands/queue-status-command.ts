@@ -4,7 +4,7 @@ import { listJobs, countJobsByStatus } from '../queue/queue-manager.js';
 import type { QueueListFilter } from '../queue/queue-types.js';
 import { print } from '../utils/console-output.js';
 import { buildSummaryLines, outstandingCount, OUTSTANDING } from './queue-status-summary.js';
-import { describeJobStatus, countStalledJobs, stalledNotice } from './queue-status-liveness.js';
+import { isJobStalled, describeJobStatus, stalledNotice } from './queue-status-liveness.js';
 
 /**
  * Rows printed when the caller does not ask for a specific number.
@@ -60,9 +60,13 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
   print(`\nUpload Queue (account: ${account})`);
   print(headline);
 
+  // Resolved once per job: the warning and the rows below read the same answers
+  // rather than each testing worker liveness for themselves.
+  const stalled = jobs.map(job => isJobStalled(job));
+
   // Directly under the headline, which otherwise counts abandoned claims as
   // work in progress and so reports a dead queue as a busy one.
-  const notice = stalledNotice(countStalledJobs(jobs));
+  const notice = stalledNotice(stalled.filter(Boolean).length);
   if (notice) print(notice);
 
   if (jobs.length === 0) {
@@ -91,10 +95,10 @@ export function queueStatusCommand(account: string, filter: QueueListFilter = {}
     const id = job.id.substring(0, 8).padEnd(10);
     const fileName = truncateFileName(basename(job.filePath), FILE_COLUMN_WIDTH - 2)
       .padEnd(FILE_COLUMN_WIDTH);
-    // Reads the worker's liveness, not just the stored status: a claim whose
-    // worker died still says 'processing', and printing its last progress would
-    // present abandoned work as a live upload.
-    const status = describeJobStatus(job).padEnd(12);
+    // Uses the liveness resolved above rather than the stored status alone: a
+    // claim whose worker died still says 'processing', and printing its last
+    // progress would present abandoned work as a live upload.
+    const status = describeJobStatus(job, stalled[index]!).padEnd(12);
     const created = formatRelativeTime(job.createdAt);
 
     print(`${num}${id}${fileName}${status}${created}`);

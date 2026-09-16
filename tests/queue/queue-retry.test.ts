@@ -4,8 +4,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeTempDir } from '../helpers/test-fixtures.js';
-import { registerKnownAccounts, resetKnownAccounts } from '../../src/queue/queue-account-registry.js';
+import { makeTempDir, useRegisteredAccounts } from '../helpers/test-fixtures.js';
+
+useRegisteredAccounts('testaccount', 'other');
 
 let tempHome: string;
 let workDir: string;
@@ -22,11 +23,9 @@ beforeEach(() => {
   tempHome = makeTempDir('retry');
   workDir = makeTempDir('retry-files');
   process.env.HOME = tempHome;
-  registerKnownAccounts(['testaccount', 'other']);
 });
 
 afterEach(async () => {
-  resetKnownAccounts();
   const { closeDb, getQueueDbPath } = await import('../../src/queue/queue-database.js');
   closeDb(getQueueDbPath());
   process.env.HOME = realHome;

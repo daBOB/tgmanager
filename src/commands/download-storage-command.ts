@@ -9,7 +9,7 @@ import { mergeChunks, cleanupChunks } from '../storage/file-splitter.js';
 import logger from '../logger.js';
 import config from '../config.js';
 import { print, printError } from '../utils/console-output.js';
-import { formatBytes } from './upload-storage-telegram-utils.js';
+import { formatBytes } from '../utils/format-bytes.js';
 
 export interface DownloadStorageOptions {
   virtualPath: string;

@@ -7,7 +7,7 @@ import type { TelegramClient } from '../types/index.js';
 import type { StorageService } from '../storage/storage-service.js';
 import { needsSplitting } from '../storage/file-splitter.js';
 import logger from '../logger.js';
-import { formatBytes } from './upload-storage-telegram-utils.js';
+import { formatBytes } from '../utils/format-bytes.js';
 import { uploadWithSplitting } from './upload-storage-split-uploader.js';
 import { uploadDirect } from './upload-storage-direct-uploader.js';
 import type { UploadStorageOptions } from './upload-storage-types.js';

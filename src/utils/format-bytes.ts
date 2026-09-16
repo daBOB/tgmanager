@@ -1,5 +1,6 @@
-// src/commands/upload-storage-telegram-utils.ts
-// Shared presentation helper for the storage commands.
+// src/utils/format-bytes.ts
+// Shared presentation helper: one byte formatter for every caller that shows
+// a file size, so precision and units cannot drift between them.
 
 /** Format bytes to human-readable string (e.g. 1.50 MB) */
 export function formatBytes(bytes: number): string {

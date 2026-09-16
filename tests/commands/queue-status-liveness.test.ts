@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isJobStalled,
   describeJobStatus,
-  countStalledJobs,
   stalledNotice,
 } from '../../src/commands/queue-status-liveness.js';
 import type { QueueJob } from '../../src/queue/queue-types.js';
@@ -31,11 +31,11 @@ const dead = () => false;
 
 describe('describeJobStatus', () => {
   it('shows progress while the claiming worker is running', () => {
-    expect(describeJobStatus(job({ workerPid: 4242, progress: 52 }), alive)).toBe('52%');
+    expect(describeJobStatus(job({ workerPid: 4242, progress: 52 }), false)).toBe('52%');
   });
 
   it('shows "processing" for a live worker that has not reported progress yet', () => {
-    expect(describeJobStatus(job({ workerPid: 4242, progress: null }), alive)).toBe('processing');
+    expect(describeJobStatus(job({ workerPid: 4242, progress: null }), false)).toBe('processing');
   });
 
   // The defect this module exists for: a worker killed mid-upload (a reboot, an
@@ -43,57 +43,68 @@ describe('describeJobStatus', () => {
   // as "52%" that is indistinguishable from a live upload, so an abandoned queue
   // reads as a working one — for 35 hours, in the case that prompted this.
   it('marks a claim whose worker is gone as stalled, not as live progress', () => {
-    expect(describeJobStatus(job({ workerPid: 660471, progress: 52 }), dead)).toBe('stalled 52%');
+    expect(describeJobStatus(job({ workerPid: 660471, progress: 52 }), true)).toBe('stalled 52%');
   });
 
   it('marks a dead worker that never reported progress as stalled', () => {
-    expect(describeJobStatus(job({ workerPid: 660471, progress: null }), dead)).toBe('stalled');
+    expect(describeJobStatus(job({ workerPid: 660471, progress: null }), true)).toBe('stalled');
   });
 
   // Nothing can be proven to be working on it, so it cannot be called live.
   it('treats a claim with no recorded pid as stalled', () => {
-    expect(describeJobStatus(job({ workerPid: null, progress: 12 }), alive)).toBe('stalled 12%');
+    expect(describeJobStatus(job({ workerPid: null, progress: 12 }), isJobStalled(job({ workerPid: null, progress: 12 }), alive))).toBe('stalled 12%');
   });
 
   it('never claims a dead worker is live, whatever the progress', () => {
     for (const progress of [0, 1, 52, 99, 100]) {
-      expect(describeJobStatus(job({ workerPid: 660471, progress }), dead)).toMatch(/^stalled/);
+      expect(describeJobStatus(job({ workerPid: 660471, progress }), true)).toMatch(/^stalled/);
     }
   });
 
   it('passes non-processing statuses through unchanged', () => {
     for (const status of ['pending', 'failed', 'completed', 'cancelled'] as const) {
-      expect(describeJobStatus(job({ status, progress: null }), dead)).toBe(status);
+      expect(describeJobStatus(job({ status, progress: null }), false)).toBe(status);
     }
   });
 
   // The Status column is padded to 12 characters; a longer string breaks the
   // table alignment that makes the listing readable.
   it('fits the status column', () => {
-    expect(describeJobStatus(job({ workerPid: 1, progress: 100 }), dead).length)
+    expect(describeJobStatus(job({ workerPid: 1, progress: 100 }), true).length)
       .toBeLessThanOrEqual(12);
   });
 });
 
-describe('countStalledJobs', () => {
-  it('counts only processing rows whose worker is gone', () => {
+describe('isJobStalled', () => {
+  it('is false while the claiming worker is running', () => {
+    expect(isJobStalled(job({ workerPid: 4242 }), alive)).toBe(false);
+  });
+
+  it('is true once that worker is gone', () => {
+    expect(isJobStalled(job({ workerPid: 660471 }), dead)).toBe(true);
+  });
+
+  // Nothing can be proven to be working on it, so it cannot be called live.
+  it('is true for a claim with no recorded pid', () => {
+    expect(isJobStalled(job({ workerPid: null }), alive)).toBe(true);
+  });
+
+  it('is false for any job that is not processing', () => {
+    for (const status of ['pending', 'failed', 'completed', 'cancelled'] as const) {
+      expect(isJobStalled(job({ status, workerPid: null }), dead)).toBe(false);
+    }
+  });
+
+  // The count in the warning is derived from this same predicate, so the two
+  // cannot drift apart the way a separate counting pass could.
+  it('drives the stalled count for a listing', () => {
     const jobs = [
       job({ id: 'a', status: 'processing', workerPid: 1 }),
       job({ id: 'b', status: 'processing', workerPid: 2 }),
       job({ id: 'c', status: 'pending', workerPid: null }),
     ];
 
-    expect(countStalledJobs(jobs, pid => pid === 1)).toBe(1);
-  });
-
-  it('reports none when every claim is live', () => {
-    const jobs = [job({ workerPid: 1 }), job({ workerPid: 2 })];
-
-    expect(countStalledJobs(jobs, alive)).toBe(0);
-  });
-
-  it('reports none for an empty listing', () => {
-    expect(countStalledJobs([], dead)).toBe(0);
+    expect(jobs.filter(j => isJobStalled(j, pid => pid === 1)).length).toBe(1);
   });
 });
 

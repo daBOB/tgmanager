@@ -4,7 +4,7 @@ import type { StoredFileInfo } from '../storage/storage-service.js';
 import { StorageService } from '../storage/storage-service.js';
 import logger from '../logger.js';
 import { print, printError } from '../utils/console-output.js';
-import { formatBytes } from './upload-storage-telegram-utils.js';
+import { formatBytes } from '../utils/format-bytes.js';
 
 export interface ListStorageOptions {
   pathPrefix?: string;

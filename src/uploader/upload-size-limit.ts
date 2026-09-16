@@ -5,8 +5,9 @@
 //   policy    - what Telegram allows the account: 4 GiB premium, 2 GiB regular.
 //   transport - what the upload protocol can address. Big files go up through
 //               upload.SaveBigFilePart, which accepts at most 8000 parts, and
-//               gramjs sends 512 KB parts. That caps a transfer at 3.91 GiB,
-//               below the 4 GiB a premium account is otherwise entitled to.
+//               the client library sends 512 KB parts. That caps a transfer
+//               at 3.91 GiB, below the 4 GiB a premium account is otherwise
+//               entitled to.
 //
 // Checking only the policy limit left a gap between 3.91 GiB and 4 GiB where a
 // file passed the pre-flight check, uploaded for hours, and was then refused by
@@ -14,21 +15,17 @@
 // the largest that ever succeeded was 3.80 GiB, and the boundary below sits
 // between the two.
 import config from '../config.js';
+import { formatBytes } from '../utils/format-bytes.js';
 import { uploadSucceeded, uploadFailed, type UploadOutcome } from './upload-outcome.js';
 
 /** Maximum parts Telegram accepts for a single big-file upload. */
 export const TELEGRAM_MAX_UPLOAD_PARTS = 8000;
 
-/** Part size gramjs uses for files in this range. */
+/** Part size the client library uses for files in this range. */
 export const UPLOAD_PART_SIZE_BYTES = 512 * 1024;
 
 /** Largest file the upload protocol can carry, whatever the account allows. */
 export const TRANSPORT_MAX_UPLOAD_BYTES = TELEGRAM_MAX_UPLOAD_PARTS * UPLOAD_PART_SIZE_BYTES;
-
-/** Bytes rendered the way the operator reads them in the queue and the logs. */
-function formatGB(bytes: number): string {
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-}
 
 /**
  * The effective size limit for an account: the stricter of policy and transport.
@@ -67,7 +64,7 @@ export function checkUploadSize(sizeBytes: number, isPremium: boolean): UploadOu
       : `${accountType} account limit`;
 
     return uploadFailed(
-      `File is ${formatGB(sizeBytes)}, over the ${formatGB(limit)} limit for this ` +
+      `File is ${formatBytes(sizeBytes)}, over the ${formatBytes(limit)} limit for this ` +
       `${accountType} account (${because})`
     );
   }
