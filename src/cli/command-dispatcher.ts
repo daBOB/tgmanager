@@ -15,6 +15,7 @@ import { routeCommand } from './command-router.js';
 import { print, printError } from '../utils/console-output.js';
 import { createGramjsLogger } from '../utils/gramjs-winston-logger.js';
 import { beginTelegramShutdown } from '../utils/telegram-shutdown-noise.js';
+import { registerKnownAccounts } from '../queue/queue-account-registry.js';
 import type { CommandOptions } from '../types/index.js';
 import type { QueueJobStatus } from '../queue/queue-types.js';
 
@@ -187,6 +188,10 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
 
     validateCommand(options.command, options);
     validateAccountName(account, Object.keys(config.accounts));
+
+    // Opens the queue for writing. Until this runs the queue refuses every
+    // enqueue, so a script that bypasses the CLI cannot reach the real database.
+    registerKnownAccounts(Object.keys(config.accounts));
 
     const queueOnlyResult = await runQueueOnlyCommand(options, account);
     if (queueOnlyResult !== null) return queueOnlyResult;

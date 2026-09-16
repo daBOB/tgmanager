@@ -2,12 +2,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rmSync } from 'node:fs';
 import { makeTempDir } from '../helpers/test-fixtures.js';
+import { registerKnownAccounts, resetKnownAccounts } from '../../src/queue/queue-account-registry.js';
 
 let tempHome: string;
 const realHome = process.env.HOME;
 
-beforeEach(() => { tempHome = makeTempDir('display'); process.env.HOME = tempHome; });
+beforeEach(() => { tempHome = makeTempDir('display'); process.env.HOME = tempHome;  registerKnownAccounts(['a']); });
 afterEach(async () => {
+  resetKnownAccounts();
   const { closeDb, getQueueDbPath } = await import('../../src/queue/queue-database.js');
   closeDb(getQueueDbPath());
   process.env.HOME = realHome;

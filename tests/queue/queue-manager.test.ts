@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rmSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { makeTempDir } from '../helpers/test-fixtures.js';
+import { registerKnownAccounts, resetKnownAccounts } from '../../src/queue/queue-account-registry.js';
 
 // The database lives under $HOME/.tgmanager, so each test gets its own HOME and
 // therefore its own database.
@@ -16,9 +17,11 @@ const realHome = process.env.HOME;
 beforeEach(() => {
   tempHome = makeTempDir('queue');
   process.env.HOME = tempHome;
+  registerKnownAccounts(['testaccount', 'other']);
 });
 
 afterEach(async () => {
+  resetKnownAccounts();
   const { closeDb } = await import('../../src/queue/queue-database.js');
   const { getQueueDbPath } = await import('../../src/queue/queue-manager.js');
   closeDb(getQueueDbPath());

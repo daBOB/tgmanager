@@ -10,6 +10,7 @@ import type { QueueJob, QueueAddOptions, QueueListFilter } from './queue-types.j
 import { getDb, getQueueDir, getQueueDbPath, inTransaction } from './queue-database.js';
 import { rowToJob, jobToInsertParams, asJobRow, asJobRows, asCount } from './queue-job-row-mapper.js';
 import { isProcessAlive } from '../utils/process-liveness.js';
+import { assertKnownAccount } from './queue-account-registry.js';
 import { pollJobStatusUntilDone } from './queue-process-utils.js';
 
 export { getQueueDir, getQueueDbPath };
@@ -78,6 +79,11 @@ export function addJob(account: string, options: QueueAddOptions): QueueJob {
  * all, and so the inserts cost one fsync rather than one each.
  */
 export function addJobs(account: string, optionsList: QueueAddOptions[]): QueueJob[] {
+  // Before anything is written, since this is the one path that creates rows
+  // and the database it writes is the real one for any caller that skipped the
+  // CLI. Checked outside the transaction so a refusal costs no write at all.
+  assertKnownAccount(account);
+
   const db = getDb();
   const jobs = optionsList.map(buildJob);
   const insert = db.prepare(INSERT_SQL);
