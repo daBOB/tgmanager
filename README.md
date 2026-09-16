@@ -206,20 +206,54 @@ Filter by virtual path prefix:
 tgmanager -a myaccount -c list-storage --virtual-path /backups/
 ```
 
-#### `queue-status` / `queue-cancel` - Inspect and manage the queue
+#### `queue-status` / `queue-cancel` / `queue-retry` - Inspect and manage the queue
 
 Both `upload` and `upload-storage` enqueue their work before doing anything
 else, so every file is a durable job. See [Upload queue](#upload-queue).
 
 ```bash
-tgmanager -a myaccount -c queue-status                  # everything, with a summary
-tgmanager -a myaccount -c queue-status --status failed  # just failures, with reasons
-tgmanager -a myaccount -c queue-status --limit 20       # newest 20
+tgmanager -a myaccount -c queue-status                  # outstanding work, in the order it will run
+tgmanager -a myaccount -c queue-status --status failed  # just failures, with the reason each one failed
+tgmanager -a myaccount -c queue-status --limit 20       # show more rows
 tgmanager -a myaccount -c queue-cancel -n a3f9          # partial job id is enough
+tgmanager -a myaccount -c queue-retry                   # requeue every failed job
+tgmanager -a myaccount -c queue-retry -n a3f9           # requeue one job by id
 ```
 
-Neither needs the account lock or a Telegram connection, so both work while an
-upload is running.
+With no `--status`, `queue-status` leads with whatever is uploading now and the
+few jobs behind it, and says up front whether any work is left at all. The job
+currently uploading shows its percentage in place of its status:
+
+```
+Upload Queue (account: myaccount)
+36 jobs queued (1 processing, 35 pending)
+
+#  ID        File                              Status      Created
+1  ea3e0bd9  ...holiday-footage-004.mp4        41%         2d ago
+2  4e383c9d  ...holiday-footage-005.mp4        pending     2d ago
+```
+
+None of these three need the account lock or a Telegram connection, so they all
+work while an upload is running.
+
+`queue-retry` skips any failed job whose source file no longer exists, since it
+could only fail again — usually that means a later attempt already uploaded it
+successfully. It also refuses to touch a job a live worker still owns, rather
+than racing it and uploading the file twice.
+
+#### `queue-run` - Drain the queue without adding to it
+
+Processes whatever is already queued. Unlike `upload`, it enqueues nothing, so
+it is the way to resume after a run was interrupted without re-pointing at the
+original source directory:
+
+```bash
+tgmanager -a myaccount -c queue-run
+```
+
+It also recovers jobs abandoned by a worker that died — see
+[Upload queue](#upload-queue) below. This is the command to reach for whenever
+`queue-status` reports stalled jobs.
 
 ### CLI Options
 
@@ -250,6 +284,10 @@ upload is running.
 | `upload-storage` / `store` | Upload a file to Telegram storage with automatic splitting |
 | `download-storage` / `get` | Download a file from Telegram storage by virtual path |
 | `list-storage` / `ls` | List all files stored in Telegram storage |
+| `queue-run` | Drain queued jobs without enqueueing anything new |
+| `queue-status` | Show what is uploading now and what is waiting |
+| `queue-retry` | Requeue failed jobs, all of them or one by id |
+| `queue-cancel` | Cancel a queued job by id |
 
 ## File Processing
 
@@ -264,7 +302,17 @@ upload is running.
 | Account Type | Direct Upload Limit | Storage Upload |
 |-------------|--------------------|----|
 | Regular | 2 GB per file | Unlimited (auto-split) |
-| Premium | 4 GB per file | Unlimited (auto-split) |
+| Premium | 3.91 GB per file | Unlimited (auto-split) |
+
+A premium account is entitled to 4 GB, but the upload protocol is the tighter
+constraint: large files go up through `upload.SaveBigFilePart`, which accepts at
+most 8000 parts of 512 KB — 4,194,304,000 bytes, or 3.91 GB. A file between
+3.91 GB and 4 GB cannot complete however long it runs, so `upload` rejects it
+immediately rather than transferring for hours and failing at the end with
+`FILE_PARTS_INVALID`.
+
+Use `upload-storage` for anything larger: it splits files into chunks and has no
+practical size ceiling.
 
 - **Image dimensions**: Max 5000x5000 pixels (auto-resized if exceeded)
 - **Storage uploads**: Files exceeding the account limit are automatically split into chunks and reassembled on download
@@ -305,9 +353,28 @@ rescanning, and a failure is recorded rather than only logged:
 tgmanager -a myaccount -c queue-status --status failed
 ```
 
-Jobs are kept after they finish, so that stays useful long afterwards. A worker
-killed mid-upload leaves its job marked `processing`; the next run notices the
-dead process and returns the job to `pending` automatically.
+Jobs are kept after they finish, so that stays useful long afterwards. Each
+failure records why it failed — the size limit, an unreadable file, or
+Telegram's own error text — so `--status failed` explains itself without
+digging through the log.
+
+A worker killed mid-upload — a reboot, an OOM kill, a closed terminal — leaves
+its job marked `processing` with the progress it had reached. `queue-status`
+checks whether that worker is still alive and says so plainly, instead of
+showing a frozen percentage that reads like an upload in flight:
+
+```
+36 jobs queued (1 processing, 35 pending)
+Warning: 1 job is stalled — claimed by a worker that is no longer running.
+No upload is in progress. Run queue-run to requeue and resume.
+
+#  ID        File                              Status      Created
+1  ea3e0bd9  ...holiday-footage-004.mp4        stalled 52% 2d ago
+```
+
+Running `queue-run` (or any upload command) returns such jobs to `pending`
+automatically and carries on. The interrupted file restarts from the beginning;
+progress is reported, not resumed.
 
 Ordering is by priority (descending), then oldest-first. A job given `--at` is
 not offered to a worker until that time has passed.
@@ -529,24 +596,38 @@ tgmanager -a myaccount -c download-storage \
    - Verify 2FA password if enabled
 
 2. **File upload fails**
-   - Check file size limits
+   - Run `-c queue-status --status failed` — each failure records its own reason
+   - Check file size limits (see [Size Limits](#size-limits))
    - Verify file permissions
    - Ensure sufficient disk space
 
-3. **Rate limiting**
+3. **The queue looks stuck / progress has not moved**
+   - Run `-c queue-status`. A job whose worker died shows as `stalled`, with a
+     warning saying no upload is in progress — nothing is running, so nothing
+     will move until you start a worker
+   - Run `-c queue-run` to requeue the stalled job and drain the rest
+   - A percentage with no `stalled` marker means a live worker really is
+     uploading; large files can sit at one percentage for a while
+
+4. **"File is 3.93 GB, over the 3.91 GB limit"**
+   - Telegram's upload protocol caps a single transfer at 3.91 GB, below the
+     4 GB a premium account is otherwise allowed (see [Size Limits](#size-limits))
+   - Use `-c upload-storage` instead, which splits the file into chunks
+
+5. **Rate limiting**
    - Tool handles this automatically
    - Increase flood wait multiplier in config if needed
 
-4. **Session errors**
+6. **Session errors**
    - Delete session folder and re-authenticate
    - Check session directory permissions
 
-5. **Storage download fails**
+7. **Storage download fails**
    - Verify the virtual path is correct with `list-storage`
    - Ensure the storage channel and its messages haven't been deleted
    - Use `--force` if the output file already exists
 
-6. **Another instance already running**
+8. **Another instance already running**
    - A process lock prevents concurrent use of the same account
    - Wait for the other instance to finish, or check for stale lock files in the `locks/` directory
 
