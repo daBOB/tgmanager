@@ -7,6 +7,8 @@ import config from './config.js';
 import { getVideoInfo } from './uploader/video-metadata-extractor.js';
 import { withFloodWaitRetryAndProgress } from './uploader/flood-wait-retry-handler.js';
 import { uploadImageWithResize } from './uploader/image-resize-and-upload.js';
+import { checkUploadSize } from './uploader/upload-size-limit.js';
+import { uploadSucceeded, uploadFailed, type UploadOutcome } from './uploader/upload-outcome.js';
 import { getErrorCode } from './utils/errors.js';
 import type { TelegramClient, UploadOptions } from './types/index.js';
 
@@ -85,7 +87,7 @@ export class Uploader {
     startTime: number,
     errorMessage: string,
     extraOptions: Partial<Omit<UploadOptions, 'file' | 'caption' | 'progressCallback'>> = {}
-  ): Promise<boolean> {
+  ): Promise<UploadOutcome> {
     const fileName = basename(filePath);
     const fileSize = (await stat(filePath)).size;
     // Explicit format: the preset's default includes `ETA: {eta}s`, and
@@ -113,19 +115,22 @@ export class Uploader {
       }, progressBar);
       progressBar.stop();
       logUpload(fileName, chatId, fileSize, Date.now() - startTime);
-      return true;
+      return uploadSucceeded;
     } catch (error) {
       progressBar.stop();
+      const detail = (error as Error).message;
       logger.error(errorMessage, {
         fileName, chatId,
-        error: (error as Error).message,
+        error: detail,
         code: getErrorCode(error)
       });
-      return false;
+      // Carries the server's own words — "400: FILE_PARTS_INVALID" and the
+      // like — out to the job record instead of leaving them in the log.
+      return uploadFailed(`${errorMessage}: ${detail}`);
     }
   }
 
-  async uploadMP4File(chatId: string, filePath: string): Promise<boolean> {
+  async uploadMP4File(chatId: string, filePath: string): Promise<UploadOutcome> {
     const startTime = Date.now();
     const { width, height, duration } = await getVideoInfo(filePath);
 
@@ -142,44 +147,31 @@ export class Uploader {
     });
   }
 
-  async uploadDocument(chatId: string, filePath: string, forceDocument = false): Promise<boolean> {
+  async uploadDocument(chatId: string, filePath: string, forceDocument = false): Promise<UploadOutcome> {
     return this.sendFileWithProgress(
       chatId, filePath, Date.now(), 'Failed to upload document',
       forceDocument ? { forceDocument: true } : {}
     );
   }
 
-  async uploadFile(chatId: string, filePath: string): Promise<boolean> {
+  async uploadFile(chatId: string, filePath: string): Promise<UploadOutcome> {
     const isPremium = await this.checkPremiumStatus();
-    const MAX_FILE_SIZE_BYTES = isPremium
-      ? config.fileProcessing.premium.maxFileSizeBytes
-      : config.fileProcessing.regular.maxFileSizeBytes;
     const extension = extname(filePath).toLowerCase();
 
     try {
       const stats = await stat(filePath);
 
-      if (stats.size === 0) {
-        logger.warn('Skipping empty file', { fileName: basename(filePath) });
-        return false;
-      }
-
-      if (stats.size > MAX_FILE_SIZE_BYTES) {
-        const limitGB = MAX_FILE_SIZE_BYTES / (1024 * 1024 * 1024);
-        logger.warn('Skipping large file', {
-          fileName: basename(filePath),
-          fileSize: `${(stats.size / 1024 / 1024 / 1024).toFixed(2)} GB`,
-          limit: `${limitGB} GB`,
-          accountType: isPremium ? 'premium' : 'regular'
-        });
-        return false;
+      // Rejecting here is the whole point: the same file refused by the server
+      // costs the entire transfer first, which at this size is hours.
+      const sizeCheck = checkUploadSize(stats.size, isPremium);
+      if (!sizeCheck.ok) {
+        logger.warn('Skipping file', { fileName: basename(filePath), reason: sizeCheck.reason });
+        return sizeCheck;
       }
     } catch (error) {
-      logger.error('Error getting file stats', {
-        fileName: basename(filePath),
-        error: (error as Error).message
-      });
-      return false;
+      const detail = (error as Error).message;
+      logger.error('Error getting file stats', { fileName: basename(filePath), error: detail });
+      return uploadFailed(`Cannot read file: ${detail}`);
     }
 
     if (extension === '.mp4') {
@@ -187,8 +179,12 @@ export class Uploader {
     }
 
     if (config.fileProcessing.image.supportedFormats.includes(extension)) {
-      return uploadImageWithResize(filePath, (path, forceDocument) =>
-        this.uploadDocument(chatId, path, forceDocument));
+      // The resize path reports success as a boolean and logs its own reasons,
+      // so the detail stops here rather than being invented.
+      const sent = await uploadImageWithResize(filePath, (path, forceDocument) =>
+        this.uploadDocument(chatId, path, forceDocument).then(outcome => outcome.ok));
+
+      return sent ? uploadSucceeded : uploadFailed('Image upload failed (see log for detail)');
     }
 
     return this.uploadDocument(chatId, filePath);

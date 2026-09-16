@@ -17,6 +17,7 @@ import {
 import logger from '../logger.js';
 import { print } from '../utils/console-output.js';
 import { createProgressWriter } from './queue-progress-writer.js';
+import { uploadSucceeded, uploadFailed, type UploadOutcome } from '../uploader/upload-outcome.js';
 
 /**
  * Run one queued job against whichever destination it names.
@@ -31,21 +32,22 @@ async function runJob(
   client: TelegramClient,
   uploader: Uploader,
   storageFor: (storageChannelId?: string) => Promise<StorageService>
-): Promise<boolean> {
+): Promise<UploadOutcome> {
   if (job.kind === 'channel') {
     if (!job.chatId) {
       logger.error('Channel job has no chat id', { jobId: job.id });
-      return false;
+      return uploadFailed('Channel job has no chat id');
     }
     return uploader.uploadFile(job.chatId, job.filePath);
   }
 
   if (!job.virtualPath) {
     logger.error('Storage job has no virtual path', { jobId: job.id });
-    return false;
+    return uploadFailed('Storage job has no virtual path');
   }
 
-  return uploadStorageCommand(
+  // The storage path still answers with a boolean and logs its own reasons.
+  const stored = await uploadStorageCommand(
     client,
     {
       filePath: job.filePath,
@@ -54,6 +56,8 @@ async function runJob(
     },
     await storageFor(job.storageChannelId)
   );
+
+  return stored ? uploadSucceeded : uploadFailed('Storage upload failed (see log for detail)');
 }
 
 /**
@@ -112,9 +116,9 @@ export async function startWorker(
     print(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);
 
     try {
-      const success = await runJob(job, client, uploader, storageFor);
+      const outcome = await runJob(job, client, uploader, storageFor);
 
-      if (success) {
+      if (outcome.ok) {
         completeJob(account, job.id);
         processed++;
         logger.info('Queue job completed', { jobId: job.id, file: basename(job.filePath) });
@@ -129,9 +133,11 @@ export async function startWorker(
           }
         }
       } else {
-        failJob(account, job.id, 'Upload returned false');
+        failJob(account, job.id, outcome.reason);
         failed++;
-        logger.warn('Queue job failed', { jobId: job.id, file: basename(job.filePath) });
+        logger.warn('Queue job failed', {
+          jobId: job.id, file: basename(job.filePath), reason: outcome.reason,
+        });
       }
     } catch (error) {
       failJob(account, job.id, (error as Error).message);
