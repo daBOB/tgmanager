@@ -136,6 +136,29 @@ export function claimJob(account: string, jobId: string): QueueJob | null {
   return getJob(account, jobId);
 }
 
+/**
+ * Hand a claimed job back to the queue, as if it had never been started.
+ *
+ * For a worker that is being shut down mid-upload: the transfer dies with the
+ * process either way, and leaving the row in `processing` only means the next
+ * run has to recognise it as stale, warning the user about a worker that is
+ * already gone. Releasing it reaches the same end state immediately.
+ *
+ * The status guard keeps this from touching a job that finished between the
+ * signal arriving and this running.
+ *
+ * @returns true when a claimed row was actually released.
+ */
+export function releaseJob(account: string, jobId: string): boolean {
+  const changed = asCount(getDb()
+    .prepare(`UPDATE jobs SET status = 'pending', worker_pid = NULL, started_at = NULL,
+                              progress = NULL
+              WHERE id = ? AND account = ? AND status = 'processing'`)
+    .run(jobId, account).changes);
+
+  return changed > 0;
+}
+
 /** Move a job to a terminal state. */
 function finishJob(account: string, jobId: string, status: 'completed' | 'failed' | 'cancelled', error: string | null): boolean {
   const changed = asCount(getDb()

@@ -16,6 +16,7 @@ import {
 } from './queue-manager.js';
 import logger from '../logger.js';
 import { print } from '../utils/console-output.js';
+import { releaseInFlightJobOnShutdown, type InFlightJob } from './queue-shutdown-release.js';
 import { createProgressWriter } from './queue-progress-writer.js';
 import { uploadSucceeded, uploadFailed, type UploadOutcome } from '../uploader/upload-outcome.js';
 
@@ -102,48 +103,60 @@ export async function startWorker(
     return storage;
   };
 
+  // A stop signal mid-upload would otherwise strand whichever job is claimed.
+  const inFlight: InFlightJob = { jobId: null };
+  const stopReleasingOnShutdown = releaseInFlightJobOnShutdown(account, inFlight);
+
   // Drain queue FIFO
-  while (true) {
-    const nextJob = getNextPendingJob(account);
-    if (!nextJob) break;
+  try {
+    while (true) {
+      const nextJob = getNextPendingJob(account);
+      if (!nextJob) break;
 
-    const job = claimJob(account, nextJob.id);
-    if (!job) continue; // Race condition: another process claimed it
+      const job = claimJob(account, nextJob.id);
+      if (!job) continue; // Race condition: another process claimed it
 
-    progress.startJob(job.id);
+      inFlight.jobId = job.id;
+      progress.startJob(job.id);
 
-    const pending = countJobsByStatus(account).pending ?? 0;
-    print(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);
+      const pending = countJobsByStatus(account).pending ?? 0;
+      print(`\n--- Queue: processing "${basename(job.filePath)}" (${pending} remaining) ---\n`);
 
-    try {
-      const outcome = await runJob(job, client, uploader, storageFor);
+      try {
+        const outcome = await runJob(job, client, uploader, storageFor);
 
-      if (outcome.ok) {
-        completeJob(account, job.id);
-        processed++;
-        logger.info('Queue job completed', { jobId: job.id, file: basename(job.filePath) });
+        if (outcome.ok) {
+          completeJob(account, job.id);
+          processed++;
+          logger.info('Queue job completed', { jobId: job.id, file: basename(job.filePath) });
 
-        // Delete source file if requested
-        if (job.deleteSource) {
-          try {
-            unlinkSync(job.filePath);
-            logger.info('Deleted source file', { filePath: job.filePath });
-          } catch (err) {
-            logger.error('Failed to delete source file', { filePath: job.filePath, error: (err as Error).message });
+          // Delete source file if requested
+          if (job.deleteSource) {
+            try {
+              unlinkSync(job.filePath);
+              logger.info('Deleted source file', { filePath: job.filePath });
+            } catch (err) {
+              logger.error('Failed to delete source file', { filePath: job.filePath, error: (err as Error).message });
+            }
           }
+        } else {
+          failJob(account, job.id, outcome.reason);
+          failed++;
+          logger.warn('Queue job failed', {
+            jobId: job.id, file: basename(job.filePath), reason: outcome.reason,
+          });
         }
-      } else {
-        failJob(account, job.id, outcome.reason);
+      } catch (error) {
+        failJob(account, job.id, (error as Error).message);
         failed++;
-        logger.warn('Queue job failed', {
-          jobId: job.id, file: basename(job.filePath), reason: outcome.reason,
-        });
+        logger.error('Queue job error', { jobId: job.id, error: (error as Error).message });
       }
-    } catch (error) {
-      failJob(account, job.id, (error as Error).message);
-      failed++;
-      logger.error('Queue job error', { jobId: job.id, error: (error as Error).message });
+
+      // Settled one way or the other: there is nothing left to hand back.
+      inFlight.jobId = null;
     }
+  } finally {
+    stopReleasingOnShutdown();
   }
 
   if (processed > 0 || failed > 0) {
