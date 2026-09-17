@@ -190,6 +190,10 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
 
     validateCommand(options.command, options);
     validateAccountName(account, Object.keys(config.accounts));
+    // Before anything is enqueued: a chat id the client cannot resolve used to
+    // be caught after the jobs were already written, leaving a queue full of
+    // work that could never run.
+    if (options.chatId) validateChatId(options.chatId);
 
     // Opens the queue for writing. Until this runs the queue refuses every
     // enqueue, so a script that bypasses the CLI cannot reach the real database.
@@ -237,8 +241,6 @@ export const dispatch = async (options: CommandOptions): Promise<number> => {
       printError('Please wait for it to finish or stop it before starting a new one.\n');
       return 1;
     }
-
-    if (options.chatId) validateChatId(options.chatId);
 
     client = await startClient(account);
     return await routeCommand({ client, account, options, uploadPath });
